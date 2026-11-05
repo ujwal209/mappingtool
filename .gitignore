@@ -1,0 +1,50 @@
+# Node / Next.js dependencies and build
+node_modules/
+.next/
+out/
+build/
+dist/
+.turbo/
+*.tsbuildinfo
+
+# Python virtual environment & cache
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+
+# Environment files & secrets (keep .env.example)
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+!.env.example
+
+# Large binary files & installers
+*.exe
+*.bin
+*.dll
+*.so
+*.dylib
+
+# Local exports / dumps
+codebase.txt
+backend_codebase.txt
+frontend_codebase.txt
+dump.txt
+raw_fail.txt
+entity_raw.txt
+
+# IDEs & System
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
