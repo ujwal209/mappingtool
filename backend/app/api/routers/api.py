@@ -4,10 +4,10 @@ Aggregates all control-plane, data-plane, and AI endpoints under /api/v1.
 """
 
 from fastapi import APIRouter
-from backend.app.api.routers import (
+from app.api.routers import (
     systems,
 )
-from backend.app.api.routers import ai_assist, audit, auth, datasets, events, exceptions, health, lineage, manifests, mapping as legacy_mapping, mappings, ontologies, projects, rules, runs, seed
+from app.api.routers import ai_assist, audit, auth, datasets, events, exceptions, health, lineage, manifests, mapping as legacy_mapping, mappings, ontologies, projects, rules, runs, seed
 
 api_router = APIRouter()
 

@@ -11,6 +11,8 @@ anyio==4.14.2
     #   langsmith
     #   starlette
     #   watchfiles
+bcrypt==5.0.0
+    # via backend
 certifi==2026.7.22
     # via
     #   httpcore
@@ -48,6 +50,7 @@ httptools==0.8.0
     # via uvicorn
 httpx==0.28.1
     # via
+    #   backend
     #   groq
     #   langchain-core
     #   langgraph-sdk
@@ -122,6 +125,8 @@ pydantic==2.13.4
 pydantic-core==2.46.4
     # via pydantic
 pydantic-settings==2.15.0
+    # via backend
+pyjwt==2.15.1
     # via backend
 pymongo==4.19.0
     # via backend
