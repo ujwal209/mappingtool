@@ -1,24 +1,21 @@
+// frontend/src/app/(auth)/login/page.tsx
 "use client";
 
-import React, { useState, Suspense } from "react";
+import React, { useState, Suspense, useEffect } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import {
   ArrowRight,
   AlertCircle,
-  CheckCircle2,
   Lock,
   Mail,
-  ShieldCheck,
   ChevronLeft,
   Eye,
   EyeOff,
-  Layers,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { TechIcon } from "@/components/tech-icons";
+
+const PURPLE = "#432DD7";
 
 function LoginForm() {
   const router = useRouter();
@@ -40,53 +37,149 @@ function LoginForm() {
       await login({ email: email.trim(), password });
       router.push(redirectTarget);
     } catch (err: any) {
-      setError(err.message || "Failed to sign in. Please verify your credentials.");
+      setError(
+        err.message || "Failed to sign in. Please verify your credentials."
+      );
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-slate-50 flex font-sans antialiased">
-      {/* ============ LEFT: FORM ============ */}
-      <div className="w-full lg:w-[46%] xl:w-[44%] h-full flex flex-col bg-white relative">
-        {/* Header bar */}
-        <div className="h-16 px-8 flex items-center justify-between border-b border-slate-100 shrink-0">
+    <div className="h-screen w-screen overflow-hidden bg-white font-sans antialiased flex">
+      {/* ============================================================
+          LEFT — BRAND PANEL (white bg, black text, purple accents)
+      ============================================================ */}
+      <div className="relative hidden lg:flex flex-col justify-between w-[42%] h-full p-12 xl:p-16 overflow-hidden bg-white border-r border-black/[0.06]">
+        {/* Decorative geometry — subtle purple accents */}
+        <div className="absolute inset-0 pointer-events-none">
+          <div
+            className="absolute -top-32 -right-32 w-[600px] h-[600px] rounded-full blur-[160px]"
+            style={{ backgroundColor: `${PURPLE}10` }}
+          />
+          <div
+            className="absolute -bottom-40 -left-24 w-[500px] h-[500px] rounded-full blur-[140px]"
+            style={{ backgroundColor: `${PURPLE}06` }}
+          />
+          <div
+            className="absolute inset-0 opacity-[0.03]"
+            style={{
+              backgroundImage: `linear-gradient(${PURPLE} 1px, transparent 1px), linear-gradient(90deg, ${PURPLE} 1px, transparent 1px)`,
+              backgroundSize: "56px 56px",
+            }}
+          />
+          <div
+            className="absolute top-1/3 -right-20 w-80 h-80 rounded-full border border-dashed"
+            style={{ borderColor: `${PURPLE}18` }}
+          />
+          <div
+            className="absolute bottom-1/4 -left-16 w-56 h-56 rounded-full border"
+            style={{ borderColor: `${PURPLE}0a` }}
+          />
+        </div>
+
+        {/* Top: designed wordmark */}
+        <div className="relative z-10 flex items-baseline gap-1 select-none">
+          <span className="text-[19px] font-bold tracking-[-0.045em] text-black leading-none">
+            Migration
+          </span>
+          <span
+            className="text-[19px] font-light tracking-[-0.02em] leading-none"
+            style={{ color: `${PURPLE}99` }}
+          >
+            Studio
+          </span>
+          <span
+            className="w-1.5 h-1.5 rounded-full ml-[1px] mb-[2px]"
+            style={{ backgroundColor: PURPLE }}
+          />
+        </div>
+
+        {/* Middle: editorial headline */}
+        <div className="relative z-10">
+          <h1 className="font-semibold tracking-[-0.04em] leading-[0.95] text-[52px] xl:text-[64px] 2xl:text-[76px] text-black">
+            Move data
+            <br />
+            <span style={{ color: PURPLE }}>without</span>
+            <br />
+            the guesswork.
+          </h1>
+
+          <p className="mt-8 text-[15px] leading-relaxed max-w-md text-black/60">
+            Deterministic replication with row-level provenance, pre-flight
+            drift gating, and a signed evidence bundle for every single run.
+          </p>
+        </div>
+
+        {/* Bottom spacer (trust markers removed) */}
+        <div className="relative z-10" />
+      </div>
+
+      {/* ============================================================
+          RIGHT — FORM (white bg, black text, purple accents)
+      ============================================================ */}
+      <div className="flex-1 h-full bg-white flex flex-col">
+        {/* Top bar */}
+        <div className="h-16 px-6 sm:px-10 flex items-center justify-between shrink-0">
           <Link
             href="/"
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-slate-900 transition-colors"
+            className="inline-flex items-center gap-1.5 text-[12px] font-medium text-black/60 hover:text-black transition-colors"
           >
             <ChevronLeft className="w-3.5 h-3.5" />
             Back
           </Link>
-          <Link href="/" className="flex items-center">
-            <Image
-              src="/logo.png"
-              alt="Logo"
-              width={130}
-              height={32}
-              className="h-7 w-auto object-contain"
-              priority
+
+          {/* Mobile wordmark */}
+          <span className="lg:hidden flex items-baseline gap-1 select-none">
+            <span className="text-[15px] font-bold tracking-[-0.045em] text-black leading-none">
+              Migration
+            </span>
+            <span
+              className="text-[15px] font-light tracking-[-0.02em] leading-none"
+              style={{ color: `${PURPLE}99` }}
+            >
+              Studio
+            </span>
+            <span
+              className="w-1 h-1 rounded-full mb-[2px] ml-[1px]"
+              style={{ backgroundColor: PURPLE }}
             />
+          </span>
+
+          <Link
+            href="/signup"
+            className="text-[12px] font-medium transition-opacity hover:opacity-70"
+            style={{ color: PURPLE }}
+          >
+            Sign up →
           </Link>
         </div>
 
-        {/* Form area */}
-        <div className="flex-1 overflow-y-auto px-8 sm:px-14 flex items-center">
-          <div className="w-full max-w-[400px] mx-auto py-10">
-            <div className="mb-8">
-              <h1 className="text-[26px] font-semibold tracking-tight text-slate-900 leading-tight">
+        {/* Centered form */}
+        <div className="flex-1 flex items-center justify-center px-6 sm:px-10 overflow-y-auto">
+          <div className="w-full max-w-[400px] py-8">
+            <div className="mb-9">
+              <h2 className="text-[32px] font-semibold tracking-[-0.03em] text-black leading-tight">
                 Welcome back
-              </h1>
-              <p className="text-[13px] text-slate-500 mt-1.5">
-                Sign in to your enterprise workspace
+              </h2>
+              <p className="text-[13.5px] text-black/50 mt-2">
+                Sign in to continue to your workspace
               </p>
             </div>
 
             {error && (
-              <div className="mb-5 px-3.5 py-3 bg-red-50 border border-red-100 rounded-lg flex items-start gap-2.5 animate-in fade-in slide-in-from-top-1">
-                <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-                <p className="text-[12px] text-red-800 leading-relaxed flex-1">
+              <div
+                className="mb-6 px-4 py-3 rounded-xl flex items-start gap-2.5 border"
+                style={{
+                  borderColor: `${PURPLE}40`,
+                  backgroundColor: `${PURPLE}06`,
+                }}
+              >
+                <AlertCircle
+                  className="w-4 h-4 shrink-0 mt-0.5"
+                  style={{ color: PURPLE }}
+                />
+                <p className="text-[12.5px] leading-relaxed flex-1 text-black/80">
                   {error}
                 </p>
               </div>
@@ -94,11 +187,11 @@ function LoginForm() {
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-[12px] font-medium text-slate-700 mb-1.5">
+                <label className="block text-[12.5px] font-medium text-black mb-1.5">
                   Email
                 </label>
                 <div className="relative">
-                  <Mail className="w-[15px] h-[15px] text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <Mail className="w-4 h-4 text-black/30 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     type="email"
                     required
@@ -106,25 +199,30 @@ function LoginForm() {
                     placeholder="you@company.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="w-full h-11 pl-10 pr-3.5 text-[13px] text-slate-900 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-slate-900 focus:ring-4 focus:ring-slate-900/[0.06] transition placeholder:text-slate-400"
+                    className="w-full h-12 pl-10 pr-3.5 text-[13.5px] text-black bg-white border border-black/10 rounded-xl focus:outline-none transition placeholder:text-black/30"
+                    style={{
+                      borderColor: email ? PURPLE : undefined,
+                      boxShadow: email ? `0 0 0 3px ${PURPLE}14` : undefined,
+                    }}
                   />
                 </div>
               </div>
 
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-[12px] font-medium text-slate-700">
+                  <label className="block text-[12.5px] font-medium text-black">
                     Password
                   </label>
                   <Link
                     href="/forgot-password"
-                    className="text-[11.5px] font-medium text-slate-500 hover:text-slate-900 transition-colors"
+                    className="text-[11.5px] font-medium transition-opacity hover:opacity-70"
+                    style={{ color: PURPLE }}
                   >
-                    Forgot password?
+                    Forgot?
                   </Link>
                 </div>
                 <div className="relative">
-                  <Lock className="w-[15px] h-[15px] text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <Lock className="w-4 h-4 text-black/30 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     type={showPassword ? "text" : "password"}
                     required
@@ -132,139 +230,77 @@ function LoginForm() {
                     placeholder="Enter your password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full h-11 pl-10 pr-11 text-[13px] text-slate-900 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-slate-900 focus:ring-4 focus:ring-slate-900/[0.06] transition placeholder:text-slate-400"
+                    className="w-full h-12 pl-10 pr-11 text-[13.5px] text-black bg-white border border-black/10 rounded-xl focus:outline-none transition placeholder:text-black/30"
+                    style={{
+                      borderColor: password ? PURPLE : undefined,
+                      boxShadow: password ? `0 0 0 3px ${PURPLE}14` : undefined,
+                    }}
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60 transition-colors"
                     tabIndex={-1}
-                    aria-label={showPassword ? "Hide password" : "Show password"}
                   >
                     {showPassword ? (
-                      <EyeOff className="w-[15px] h-[15px]" />
+                      <EyeOff className="w-4 h-4" />
                     ) : (
-                      <Eye className="w-[15px] h-[15px]" />
+                      <Eye className="w-4 h-4" />
                     )}
                   </button>
                 </div>
               </div>
 
-              <Button
+              <button
                 type="submit"
                 disabled={loading || !email.trim() || !password}
-                className="w-full h-11 bg-slate-900 hover:bg-slate-800 text-white text-[13px] font-medium rounded-lg shadow-sm disabled:opacity-50"
+                className="w-full h-12 text-white text-[13.5px] font-semibold rounded-xl transition hover:opacity-90 disabled:opacity-40 group inline-flex items-center justify-center"
+                style={{ backgroundColor: PURPLE }}
               >
                 {loading ? (
                   "Signing in…"
                 ) : (
                   <span className="inline-flex items-center gap-2">
-                    Sign in <ArrowRight className="w-3.5 h-3.5" />
+                    Sign in
+                    <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
                   </span>
                 )}
-              </Button>
+              </button>
             </form>
 
-            <div className="mt-6 text-center text-[12.5px] text-slate-500">
+            <p className="mt-8 text-center text-[13px] text-black/50">
               Don&apos;t have an account?{" "}
               <Link
                 href="/signup"
-                className="font-semibold text-slate-900 hover:underline"
+                className="font-semibold transition-opacity hover:opacity-70"
+                style={{ color: PURPLE }}
               >
                 Create one
               </Link>
-            </div>
-
-            <div className="mt-10 pt-6 border-t border-slate-100">
-              <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-400">
-                <ShieldCheck className="w-3.5 h-3.5" />
-                <span>256-bit TLS · SOC 2 Type II · ISO 27001</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ============ RIGHT: VISUAL ============ */}
-      <div className="hidden lg:flex flex-1 h-full relative overflow-hidden bg-slate-950">
-        {/* Ambient gradients */}
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_60%_50%_at_50%_0%,rgba(99,102,241,0.18),transparent_70%)]" />
-        <div className="absolute -bottom-40 -right-40 w-[600px] h-[600px] bg-indigo-500/[0.08] rounded-full blur-3xl" />
-        <div className="absolute -top-20 -left-20 w-[400px] h-[400px] bg-emerald-500/[0.06] rounded-full blur-3xl" />
-
-        <div className="relative z-10 flex flex-col justify-between p-14 xl:p-16 w-full">
-  
-
-          {/* Middle content */}
-          <div className="space-y-9 max-w-lg">
-            <div className="space-y-4">
-              <h2 className="text-[32px] xl:text-[36px] font-semibold tracking-tight leading-[1.15] text-white">
-                Standardize every byte with canonical business ontologies.
-              </h2>
-              <p className="text-[14px] text-slate-400 leading-relaxed">
-                Connect to source repositories, automatically profile physical
-                attributes, enforce corporate rulebooks, and persist verified
-                mappings directly in destination systems.
-              </p>
-            </div>
-
-            {/* Connector icons */}
-            <div className="space-y-3">
-              <p className="text-[10px] uppercase font-bold tracking-[0.12em] text-slate-500">
-                Multi-cloud connectors
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {[
-                  "fabric",
-                  "d365",
-                  "snowflake",
-                  "databricks",
-                  "postgresql",
-                  "oracle",
-                  "mongodb",
-                  "bigquery",
-                  "salesforce",
-                  "s3",
-                ].map((id) => (
-                  <div
-                    key={id}
-                    className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center p-2 hover:bg-white/[0.08] hover:border-white/[0.15] transition"
-                  >
-                    <TechIcon name={id} className="w-5 h-5" />
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Feature list */}
-            <div className="space-y-2.5">
-              {[
-                "Pre-flight gating blocks pipelines before schema drift corrupts target storage",
-                "Approved mapping versions are frozen and stored in target catalogs",
-                "Reverse row-level provenance traces each record back to source",
-              ].map((text, i) => (
-                <div key={i} className="flex items-start gap-2.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <span className="text-[12.5px] text-slate-300 leading-relaxed">
-                    {text}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Bottom quote */}
-          <div className="pt-6 border-t border-white/[0.06]">
-            <p className="text-[12px] italic text-slate-400 leading-relaxed max-w-md">
-              &ldquo;Every transformation rule and mapping snapshot is
-              cryptographically hashed and saved into the destination
-              catalog.&rdquo;
-            </p>
-            <p className="text-[10.5px] text-slate-500 font-mono mt-2 tracking-wide">
-              DATA MIGRATION STUDIO · AUDIT SPECIFICATION
             </p>
           </div>
         </div>
+
+        {/* Footer */}
+        <footer className="shrink-0 border-t border-black/5 px-6 sm:px-10 h-12 flex items-center justify-between text-[11px] text-black/40">
+          <span>© 2026 Migration Studio</span>
+          <div className="flex items-center gap-4">
+            <Link
+              href="/privacy"
+              className="transition-opacity hover:opacity-70"
+              style={{ color: PURPLE }}
+            >
+              Privacy
+            </Link>
+            <Link
+              href="/terms"
+              className="transition-opacity hover:opacity-70"
+              style={{ color: PURPLE }}
+            >
+              Terms
+            </Link>
+          </div>
+        </footer>
       </div>
     </div>
   );
@@ -274,7 +310,7 @@ export default function LoginPage() {
   return (
     <Suspense
       fallback={
-        <div className="h-screen flex items-center justify-center text-xs text-slate-500 font-mono">
+        <div className="h-screen w-screen flex items-center justify-center text-xs text-black/50 font-mono bg-white">
           Loading…
         </div>
       }

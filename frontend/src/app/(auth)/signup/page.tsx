@@ -1,27 +1,27 @@
+// frontend/src/app/(auth)/signup/page.tsx
 "use client";
 
 import React, { useState } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import {
   ArrowRight,
   AlertCircle,
-  CheckCircle2,
   Lock,
   Mail,
   User,
   Building,
-  Briefcase,
-  ShieldCheck,
   ChevronLeft,
   Eye,
   EyeOff,
+  Sparkles,
+  Zap,
+  CheckCircle2,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { TechIcon } from "@/components/tech-icons";
 import { CustomDropdown, DropdownOption } from "@/components/ui/custom-dropdown";
+
+const PURPLE = "#432DD7";
 
 // ============================================================
 // Role options — grouped by category, with descriptions
@@ -157,50 +157,70 @@ export default function SignupPage() {
   };
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-slate-50 flex font-sans antialiased">
-      {/* ============ LEFT: FORM ============ */}
+    <div className="h-screen w-screen overflow-hidden bg-white font-sans antialiased flex">
+      {/* ============================================================
+          LEFT — FORM (white bg, black text, purple accents)
+      ============================================================ */}
       <div className="w-full lg:w-[46%] xl:w-[44%] h-full flex flex-col bg-white">
-        <div className="h-16 px-8 flex items-center justify-between border-b border-slate-100 shrink-0">
+        {/* Top bar */}
+        <div className="h-16 px-6 sm:px-8 flex items-center justify-between shrink-0">
           <Link
             href="/"
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-slate-900 transition-colors"
+            className="inline-flex items-center gap-1.5 text-[12px] font-medium text-black/60 hover:text-black transition-colors"
           >
             <ChevronLeft className="w-3.5 h-3.5" />
             Back
           </Link>
-          <Link href="/" className="flex items-center">
-            <Image
-              src="/logo.png"
-              alt="Logo"
-              width={130}
-              height={32}
-              className="h-7 w-auto object-contain"
-              priority
+
+          {/* Designed wordmark */}
+          <Link href="/" className="flex items-baseline gap-1 select-none">
+            <span className="text-[15px] font-bold tracking-[-0.045em] text-black leading-none">
+              Migration
+            </span>
+            <span
+              className="text-[15px] font-light tracking-[-0.02em] leading-none"
+              style={{ color: `${PURPLE}99` }}
+            >
+              Studio
+            </span>
+            <span
+              className="w-1 h-1 rounded-full mb-[2px] ml-[1px]"
+              style={{ backgroundColor: PURPLE }}
             />
           </Link>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-8 sm:px-14">
+        {/* Form */}
+        <div className="flex-1 overflow-y-auto px-6 sm:px-14">
           <div className="w-full max-w-[440px] mx-auto py-8">
-            <div className="mb-6">
-              <h1 className="text-[26px] font-semibold tracking-tight text-slate-900 leading-tight">
+            <div className="mb-7">
+              <h1 className="text-[30px] font-semibold tracking-[-0.03em] text-black leading-tight">
                 Create your workspace
               </h1>
-              <p className="text-[13px] text-slate-500 mt-1.5">
+              <p className="text-[13.5px] text-black/50 mt-2">
                 Register to start managing schema migrations
               </p>
             </div>
 
             {error && (
-              <div className="mb-5 px-3.5 py-3 bg-red-50 border border-red-100 rounded-lg flex items-start gap-2.5 animate-in fade-in">
-                <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-                <p className="text-[12px] text-red-800 leading-relaxed flex-1">
+              <div
+                className="mb-6 px-4 py-3 rounded-xl flex items-start gap-2.5 border"
+                style={{
+                  borderColor: `${PURPLE}40`,
+                  backgroundColor: `${PURPLE}06`,
+                }}
+              >
+                <AlertCircle
+                  className="w-4 h-4 shrink-0 mt-0.5"
+                  style={{ color: PURPLE }}
+                />
+                <p className="text-[12.5px] leading-relaxed flex-1 text-black/80">
                   {error}
                 </p>
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="space-y-3.5">
+            <form onSubmit={handleSubmit} className="space-y-4">
               <Field label="Full name" icon={User}>
                 <input
                   type="text"
@@ -237,7 +257,7 @@ export default function SignupPage() {
                 </Field>
 
                 <div>
-                  <label className="block text-[12px] font-medium text-slate-700 mb-1.5">
+                  <label className="block text-[12px] font-medium text-black mb-1.5">
                     Role
                   </label>
                   <CustomDropdown
@@ -265,13 +285,13 @@ export default function SignupPage() {
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60 transition-colors"
                   tabIndex={-1}
                 >
                   {showPassword ? (
-                    <EyeOff className="w-[15px] h-[15px]" />
+                    <EyeOff className="w-4 h-4" />
                   ) : (
-                    <Eye className="w-[15px] h-[15px]" />
+                    <Eye className="w-4 h-4" />
                   )}
                 </button>
               </Field>
@@ -290,18 +310,18 @@ export default function SignupPage() {
                 <button
                   type="button"
                   onClick={() => setShowConfirm(!showConfirm)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60 transition-colors"
                   tabIndex={-1}
                 >
                   {showConfirm ? (
-                    <EyeOff className="w-[15px] h-[15px]" />
+                    <EyeOff className="w-4 h-4" />
                   ) : (
-                    <Eye className="w-[15px] h-[15px]" />
+                    <Eye className="w-4 h-4" />
                   )}
                 </button>
               </Field>
 
-              <Button
+              <button
                 type="submit"
                 disabled={
                   loading ||
@@ -310,53 +330,94 @@ export default function SignupPage() {
                   !password ||
                   !confirmPassword
                 }
-                className="w-full h-11 bg-slate-900 hover:bg-slate-800 text-white text-[13px] font-medium rounded-lg shadow-sm disabled:opacity-50 mt-2"
+                className="w-full h-11 text-white text-[13px] font-semibold rounded-xl transition hover:opacity-90 disabled:opacity-40 group inline-flex items-center justify-center mt-2"
+                style={{ backgroundColor: PURPLE }}
               >
                 {loading ? (
                   "Creating account…"
                 ) : (
                   <span className="inline-flex items-center gap-2">
-                    Create account <ArrowRight className="w-3.5 h-3.5" />
+                    Create account
+                    <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
                   </span>
                 )}
-              </Button>
+              </button>
             </form>
 
-            <div className="mt-5 text-center text-[12.5px] text-slate-500">
+            <div className="mt-6 text-center text-[13px] text-black/50">
               Already have an account?{" "}
               <Link
                 href="/login"
-                className="font-semibold text-slate-900 hover:underline"
+                className="font-semibold transition-opacity hover:opacity-70"
+                style={{ color: PURPLE }}
               >
                 Sign in
               </Link>
             </div>
-
-            <div className="mt-8 pt-5 border-t border-slate-100">
-              <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-400">
-                <ShieldCheck className="w-3.5 h-3.5" />
-                <span>Encrypted workspace · SOC 2 · ISO 27001</span>
-              </div>
-            </div>
           </div>
         </div>
+
+        {/* Footer */}
+        <footer className="shrink-0 border-t border-black/5 px-6 sm:px-8 h-12 flex items-center justify-between text-[11px] text-black/40">
+          <span>© 2026 Migration Studio</span>
+          <div className="flex items-center gap-4">
+            <Link
+              href="/privacy"
+              className="transition-opacity hover:opacity-70"
+              style={{ color: PURPLE }}
+            >
+              Privacy
+            </Link>
+            <Link
+              href="/terms"
+              className="transition-opacity hover:opacity-70"
+              style={{ color: PURPLE }}
+            >
+              Terms
+            </Link>
+          </div>
+        </footer>
       </div>
 
-      {/* ============ RIGHT: VISUAL ============ */}
-      <div className="hidden lg:flex flex-1 h-full relative overflow-hidden bg-slate-950">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_60%_50%_at_50%_0%,rgba(99,102,241,0.18),transparent_70%)]" />
-        <div className="absolute -top-24 -left-24 w-[500px] h-[500px] bg-indigo-500/[0.08] rounded-full blur-3xl" />
-        <div className="absolute -bottom-40 -right-32 w-[600px] h-[600px] bg-emerald-500/[0.06] rounded-full blur-3xl" />
+      {/* ============================================================
+          RIGHT — BRAND PANEL (white bg, black text, purple accents)
+      ============================================================ */}
+      <div className="relative hidden lg:flex flex-1 h-full overflow-hidden bg-white border-l border-black/[0.06]">
+        {/* Decorative geometry — subtle purple accents */}
+        <div className="absolute inset-0 pointer-events-none">
+          <div
+            className="absolute -top-32 -right-32 w-[600px] h-[600px] rounded-full blur-[160px]"
+            style={{ backgroundColor: `${PURPLE}10` }}
+          />
+          <div
+            className="absolute -bottom-40 -left-24 w-[500px] h-[500px] rounded-full blur-[140px]"
+            style={{ backgroundColor: `${PURPLE}06` }}
+          />
+          <div
+            className="absolute inset-0 opacity-[0.03]"
+            style={{
+              backgroundImage: `linear-gradient(${PURPLE} 1px, transparent 1px), linear-gradient(90deg, ${PURPLE} 1px, transparent 1px)`,
+              backgroundSize: "56px 56px",
+            }}
+          />
+          <div
+            className="absolute top-1/3 -right-20 w-80 h-80 rounded-full border border-dashed"
+            style={{ borderColor: `${PURPLE}18` }}
+          />
+          <div
+            className="absolute bottom-1/4 -left-16 w-56 h-56 rounded-full border"
+            style={{ borderColor: `${PURPLE}0a` }}
+          />
+        </div>
 
-        <div className="relative z-10 flex flex-col justify-between p-14 xl:p-16 w-full">
-         
-
+        <div className="relative z-10 flex flex-col justify-center p-14 xl:p-16 w-full">
           <div className="space-y-9 max-w-lg">
             <div className="space-y-4">
-              <h2 className="text-[32px] xl:text-[36px] font-semibold tracking-tight leading-[1.15] text-white">
-                Deterministic, audited replication for modern enterprises.
+              <h2 className="text-[32px] xl:text-[38px] font-semibold tracking-[-0.03em] leading-[1.12] text-black">
+                Deterministic, audited replication for{" "}
+                <span style={{ color: PURPLE }}>modern enterprises.</span>
               </h2>
-              <p className="text-[14px] text-slate-400 leading-relaxed">
+              <p className="text-[14px] text-black/60 leading-relaxed">
                 Standardize business concepts in canonical ontologies, evaluate
                 mapping proposals with confidence scoring, and persist
                 transformation catalogs directly in target endpoints.
@@ -364,57 +425,22 @@ export default function SignupPage() {
             </div>
 
             <div className="space-y-3">
-              <p className="text-[10px] uppercase font-bold tracking-[0.12em] text-slate-500">
-                Multi-cloud connectors
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {[
-                  "fabric",
-                  "d365",
-                  "snowflake",
-                  "databricks",
-                  "postgresql",
-                  "oracle",
-                  "mongodb",
-                  "bigquery",
-                  "salesforce",
-                  "s3",
-                ].map((id) => (
-                  <div
-                    key={id}
-                    className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center p-2 hover:bg-white/[0.08] hover:border-white/[0.15] transition"
-                  >
-                    <TechIcon name={id} className="w-5 h-5" />
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-2.5">
               {[
                 "Idempotent target loads ensure zero duplicate records on retries",
                 "Immutable domain events track every mapping change, approval, and run",
                 "Quarantine queues capture non-conforming records without halting execution",
               ].map((text, i) => (
                 <div key={i} className="flex items-start gap-2.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <span className="text-[12.5px] text-slate-300 leading-relaxed">
+                  <CheckCircle2
+                    className="w-4 h-4 shrink-0 mt-0.5"
+                    style={{ color: PURPLE }}
+                  />
+                  <span className="text-[13px] text-black/70 leading-relaxed">
                     {text}
                   </span>
                 </div>
               ))}
             </div>
-          </div>
-
-          <div className="pt-6 border-t border-white/[0.06]">
-            <p className="text-[12px] italic text-slate-400 leading-relaxed max-w-md">
-              &ldquo;Zero secret leakage into audit manifests, complete
-              reverse record-level lineage, and automated schema drift
-              gating.&rdquo;
-            </p>
-            <p className="text-[10.5px] text-slate-500 font-mono mt-2 tracking-wide">
-              ENTERPRISE QUALITY ASSURANCE GUARANTEE
-            </p>
           </div>
         </div>
       </div>
@@ -422,8 +448,11 @@ export default function SignupPage() {
   );
 }
 
+// ============================================================
+// Shared styles + small components
+// ============================================================
 const inputCls =
-  "w-full h-11 pl-10 pr-3.5 text-[13px] text-slate-900 bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-slate-900 focus:ring-4 focus:ring-slate-900/[0.06] transition placeholder:text-slate-400";
+  "w-full h-11 pl-10 pr-3.5 text-[13px] text-black bg-white border border-black/10 rounded-xl focus:outline-none transition placeholder:text-black/30 focus:border-[#432DD7] focus:ring-[3px] focus:ring-[#432DD7]/10";
 
 function Field({
   label,
@@ -436,11 +465,11 @@ function Field({
 }) {
   return (
     <div>
-      <label className="block text-[12px] font-medium text-slate-700 mb-1.5">
+      <label className="block text-[12px] font-medium text-black mb-1.5">
         {label}
       </label>
       <div className="relative">
-        <Icon className="w-[15px] h-[15px] text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 z-10 pointer-events-none" />
+        <Icon className="w-[15px] h-[15px] text-black/30 absolute left-3.5 top-1/2 -translate-y-1/2 z-10 pointer-events-none" />
         {children}
       </div>
     </div>
