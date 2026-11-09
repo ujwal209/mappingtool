@@ -28,6 +28,7 @@ import {
   ChevronsUpDown, // ⭐ new
 } from "lucide-react";
 import { toast } from "sonner";
+import { API_V1 } from "@/lib/api-config";
 import {
   pairMappingApi,
   type PairMappingSet,
@@ -301,10 +302,7 @@ function Inner() {
     };
   }, []);
 
-  const API_BASE =
-    process.env.NEXT_PUBLIC_API_BASE_URL ||
-    process.env.NEXT_PUBLIC_API_URL ||
-    "http://127.0.0.1:8000/api/v1";
+  const API_BASE = API_V1;
 
   const fetchSourceColumns = useCallback(
     async (datasetIds: string[]) => {

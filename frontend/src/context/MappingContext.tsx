@@ -128,7 +128,7 @@ export function MappingProvider({ children }: { children: React.ReactNode }) {
         setErrorMessage(
           err instanceof Error
             ? err.message
-            : "Backend connection error. Make sure the server is active on port 8000."
+            : "Backend connection error. Make sure the backend server is running and reachable."
         );
       }
     }

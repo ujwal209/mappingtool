@@ -1,10 +1,11 @@
 /**
- * KB API client — talks to FastAPI directly at 127.0.0.1:8000/api/v1.
+ * KB API client — talks to FastAPI backend via unified api-config.
  * Requires CORS on the backend (allow_origin_regex for localhost ports).
  */
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000/api/v1";
+import { API_V1 } from "./api-config";
+
+const API_BASE = API_V1;
 
 // ─────────────────────────────────────────────────────────────
 // Auth

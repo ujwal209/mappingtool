@@ -283,7 +283,9 @@ export interface GeminiPoolMetrics {
   keys_telemetry: KeyTelemetry[];
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+import { API_ROOT } from "./api-config";
+
+const API_BASE = API_ROOT;
 
 class ApiClient {
   private getHeaders(): Record<string, string> {

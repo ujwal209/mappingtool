@@ -27,10 +27,9 @@ import { toast } from "sonner";
 // ═════════════════════════════════════════════════════════════
 // Constants
 // ═════════════════════════════════════════════════════════════
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://127.0.0.1:8000/api/v1";
+import { API_V1 } from "@/lib/api-config";
+
+const API_BASE = API_V1;
 
 const DEFAULT_MIN_CONFIDENCE = 0.5;
 const MIN_ALLOWED_CONFIDENCE = 0.3;

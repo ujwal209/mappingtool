@@ -85,8 +85,9 @@ export interface TransformResponse {
   data: Record<string, any>[];
 }
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+import { API_ROOT } from "./api-config";
+
+const API_BASE_URL = API_ROOT;
 
 export async function fetchMockDatasets(): Promise<MockDatasetSummary[]> {
   const res = await fetch(`${API_BASE_URL}/api/v1/mapping/mock-datasets`, {

@@ -30,10 +30,9 @@ import { toast } from "sonner";
 // ═════════════════════════════════════════════════════════════
 // Constants + helpers
 // ═════════════════════════════════════════════════════════════
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://127.0.0.1:8000/api/v1";
+import { API_V1 } from "@/lib/api-config";
+
+const API_BASE = API_V1;
 
 function authHeaders(): Record<string, string> {
   const h: Record<string, string> = { "Content-Type": "application/json" };

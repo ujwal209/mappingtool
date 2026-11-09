@@ -107,7 +107,7 @@ function ConnectorsListView() {
       setLoading(false);
       setError(
         "Request timed out after 20s. The backend may be unreachable — " +
-          "check that it's running at http://127.0.0.1:8000 and hit Refresh.",
+          "check backend connectivity and hit Refresh.",
       );
     }, LOAD_TIMEOUT_MS);
 
