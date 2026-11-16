@@ -10,7 +10,6 @@ import {
   Server,
   BookOpen,
   FileCode,
-  GitBranch,
   LogOut,
   Settings,
   PanelLeftClose,
@@ -18,7 +17,6 @@ import {
   X,
   Table2,
   Compass,
-  Plus,
   Code2,
   Rocket,
   ListChecks,
@@ -70,28 +68,13 @@ export function ConsoleSidebar({
       ],
     },
     {
-      label: "Table Matching",
+      label: "Schema Mapping",
       items: [
-        { href: "/table-matching", label: "Pair Sets", icon: Table2 },
+        { href: "/table-matching", label: "Mapping Sets", icon: Table2 },
         {
           href: "/table-matching/discover",
-          label: "Discover Pairs",
+          label: "Discover Schemas",
           icon: Compass,
-        },
-      ],
-    },
-    {
-      label: "Column Mapping",
-      items: [
-        {
-          href: "/pair-mapping",
-          label: "All Mappings",
-          icon: GitBranch,
-        },
-        {
-          href: "/pair-mapping/new",
-          label: "New Column Mapping",
-          icon: Plus,
         },
       ],
     },
@@ -115,14 +98,6 @@ export function ConsoleSidebar({
   const isActive = (href: string) => {
     if (pathname === href) return true;
 
-    if (href === "/mapping") return pathname === "/mapping";
-
-    if (href === "/mapping/new")
-      return (
-        pathname === "/mapping/new" ||
-        pathname.startsWith("/mapping/new/")
-      );
-
     if (href === "/table-matching") {
       if (pathname === "/table-matching") return true;
       if (pathname === "/table-matching/discover") return false;
@@ -133,23 +108,6 @@ export function ConsoleSidebar({
       return (
         pathname === "/table-matching/discover" ||
         pathname.startsWith("/table-matching/discover/")
-      );
-    }
-
-    if (href === "/pair-mapping") {
-      if (pathname === "/pair-mapping") return true;
-      if (pathname === "/pair-mapping/new") return false;
-      const segments = pathname.split("/").filter(Boolean);
-      if (segments.length >= 2 && segments[0] === "pair-mapping") {
-        return segments[1] !== "new";
-      }
-      return false;
-    }
-
-    if (href === "/pair-mapping/new") {
-      return (
-        pathname === "/pair-mapping/new" ||
-        pathname.startsWith("/pair-mapping/new/")
       );
     }
 

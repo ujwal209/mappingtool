@@ -1,11 +1,11 @@
-// src/app/(protected)/table-matching/discover/page.tsx
 "use client";
 
-import {
+import React, {
   Suspense,
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import Link from "next/link";
@@ -13,21 +13,16 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   ArrowRight,
-  Database,
-  Layers,
-  BookOpen,
   Check,
-  ChevronsUpDown,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   LoaderCircle,
   AlertTriangle,
+  Search,
   X,
-  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
-
-// ═════════════════════════════════════════════════════════════
-// Constants
-// ═════════════════════════════════════════════════════════════
 import { API_V1 } from "@/lib/api-config";
 
 const API_BASE = API_V1;
@@ -36,10 +31,11 @@ const DEFAULT_MIN_CONFIDENCE = 0.5;
 const MIN_ALLOWED_CONFIDENCE = 0.3;
 const MAX_ALLOWED_CONFIDENCE = 0.95;
 const CONFIDENCE_STEP = 0.05;
+const DROPDOWN_PAGE_SIZE = 10;
 
-// ═════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────
 // Types
-// ═════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────
 interface SystemOption {
   system_id: string;
   name: string;
@@ -54,13 +50,14 @@ interface OntologyOption {
   domain?: string;
 }
 
-// ═════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────
 // Helpers
-// ═════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────
 function authHeaders(): Record<string, string> {
   const h: Record<string, string> = { "Content-Type": "application/json" };
   if (typeof window !== "undefined") {
-    const token = localStorage.getItem("auth_token");
+    const token =
+      localStorage.getItem("auth_token") || localStorage.getItem("token");
     if (token) h.Authorization = `Bearer ${token}`;
     h["X-Tenant-ID"] = localStorage.getItem("tenant_id") || "tenant-default";
   }
@@ -80,27 +77,27 @@ function formatConfidence(v: number): string {
   return `${(v * 100).toFixed(0)}%`;
 }
 
-// ═════════════════════════════════════════════════════════════
-// Page (default export wrapper)
-// ═════════════════════════════════════════════════════════════
-export default function DiscoverPage() {
+// ─────────────────────────────────────────────────────────────
+// Page Wrapper
+// ─────────────────────────────────────────────────────────────
+export default function DiscoverSchemaMappingPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-[calc(100vh-4rem)] bg-slate-50 flex items-center justify-center">
-          <LoaderCircle className="w-4 h-4 animate-spin text-slate-400" />
+        <div className="min-h-[calc(100vh-4rem)] bg-[#F8FAFC] flex items-center justify-center">
+          <LoaderCircle className="w-5 h-5 animate-spin text-[#432DD7]" />
         </div>
       }
     >
-      <DiscoverInner />
+      <DiscoverSchemaMappingInner />
     </Suspense>
   );
 }
 
-// ═════════════════════════════════════════════════════════════
-// Inner page
-// ═════════════════════════════════════════════════════════════
-function DiscoverInner() {
+// ─────────────────────────────────────────────────────────────
+// Inner Page
+// ─────────────────────────────────────────────────────────────
+function DiscoverSchemaMappingInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const projectId = resolveProjectId(searchParams.get("project_id"));
@@ -120,12 +117,14 @@ function DiscoverInner() {
   // Streaming progress states
   const [streamingStatus, setStreamingStatus] = useState<string>("");
   const [streamingProgress, setStreamingProgress] = useState<number>(0);
-  const [streamedPairs, setStreamedPairs] = useState<Array<{
-    source_table: string;
-    target_table: string;
-    confidence_score: number;
-    rationale?: string;
-  }>>([]);
+  const [streamedPairs, setStreamedPairs] = useState<
+    Array<{
+      source_table: string;
+      target_table: string;
+      confidence_score: number;
+      rationale?: string;
+    }>
+  >([]);
 
   const canSubmit =
     !submitting &&
@@ -137,22 +136,22 @@ function DiscoverInner() {
   // ── Submit with SSE Streaming & Fallback ───────────────────
   const submit = async () => {
     if (!name.trim()) {
-      setError("Give this pair set a name.");
+      setError("Enter a name for this schema mapping set.");
       return;
     }
     if (!sourceSystemId || !targetSystemId) {
-      setError("Pick a source system and a target system.");
+      setError("Select both a source system and a target system.");
       return;
     }
     if (sourceSystemId === targetSystemId) {
-      setError("Source and target systems must differ.");
+      setError("Source and target systems must be different.");
       return;
     }
 
     setSubmitting(true);
     setError(null);
     setStreamingProgress(5);
-    setStreamingStatus("Initiating Table Matching Agent...");
+    setStreamingStatus("Initializing schema alignment agent…");
     setStreamedPairs([]);
 
     const payload = {
@@ -179,7 +178,6 @@ function DiscoverInner() {
       );
 
       if (!res.ok) {
-        // Fallback to standard proposal endpoint
         const fallbackRes = await fetch(
           `${API_BASE}/mapping-sets/${encodeURIComponent(
             projectId
@@ -192,11 +190,13 @@ function DiscoverInner() {
         );
         if (!fallbackRes.ok) {
           const body = await fallbackRes.json().catch(() => ({}));
-          throw new Error(body?.detail || `Propose failed (${fallbackRes.status})`);
+          throw new Error(
+            body?.detail || `Discovery failed (${fallbackRes.status})`
+          );
         }
         const data = await fallbackRes.json();
-        toast.success("Pair set created", {
-          description: `${data.pairs?.length ?? 0} pair${
+        toast.success("Schema mapping set created", {
+          description: `${data.pairs?.length ?? 0} schema alignment${
             (data.pairs?.length ?? 0) === 1 ? "" : "s"
           } proposed.`,
         });
@@ -228,7 +228,7 @@ function DiscoverInner() {
               try {
                 const parsed = JSON.parse(clean.slice(6));
                 if (parsed.type === "status") {
-                  setStreamingStatus(parsed.message || "Analyzing schemas...");
+                  setStreamingStatus(parsed.message || "Analyzing schemas…");
                   if (typeof parsed.progress === "number") {
                     setStreamingProgress(parsed.progress);
                   }
@@ -241,11 +241,13 @@ function DiscoverInner() {
                   }
                 } else if (parsed.type === "complete") {
                   setStreamingProgress(100);
-                  setStreamingStatus(parsed.message || "Completed!");
+                  setStreamingStatus(parsed.message || "Completed");
                   finalSetId = parsed.table_mapping_set_id;
                   finalCount = parsed.result?.pairs?.length || 0;
                 } else if (parsed.type === "error") {
-                  throw new Error(parsed.message || "Matching engine returned error");
+                  throw new Error(
+                    parsed.message || "Schema matching engine returned an error"
+                  );
                 }
               } catch (err: any) {
                 if (err.message && !err.message.includes("JSON")) {
@@ -258,8 +260,10 @@ function DiscoverInner() {
       }
 
       if (finalSetId) {
-        toast.success("Pair set created", {
-          description: `${finalCount} pair${finalCount === 1 ? "" : "s"} proposed.`,
+        toast.success("Schema mapping set created", {
+          description: `${finalCount} schema alignment${
+            finalCount === 1 ? "" : "s"
+          } proposed.`,
         });
         setTimeout(() => {
           router.push(
@@ -267,62 +271,64 @@ function DiscoverInner() {
               finalSetId!
             )}?project_id=${encodeURIComponent(projectId)}`
           );
-        }, 800);
+        }, 700);
       } else {
-        router.push(`/table-matching?project_id=${encodeURIComponent(projectId)}`);
+        router.push(
+          `/table-matching?project_id=${encodeURIComponent(projectId)}`
+        );
       }
     } catch (e: any) {
-      const msg = e?.message || "Failed to propose table pairs";
+      const msg = e?.message || "Failed to discover schema mappings";
       setError(msg);
-      toast.error("Propose failed", { description: msg });
+      toast.error("Discovery failed", { description: msg });
       setSubmitting(false);
     }
   };
 
-  // ═══════════════════════════════════════════════════════
-  // Render
-  // ═══════════════════════════════════════════════════════
   return (
-    <div className="min-h-[calc(100vh-4rem)] bg-slate-50">
-      <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-6">
-        {/* Back */}
-        <Link
-          href={`/table-matching?project_id=${encodeURIComponent(projectId)}`}
-          className="inline-flex items-center gap-1.5 text-[11.5px] text-slate-500 hover:text-slate-900 transition mb-4"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          Back to table matching
-        </Link>
+    <div className="min-h-[calc(100vh-4rem)] bg-[#F8FAFC] text-slate-900 pb-16">
+      <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+        {/* Back link */}
+        <div>
+          <Link
+            href={`/table-matching?project_id=${encodeURIComponent(projectId)}`}
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-slate-900 transition"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Back to schema mappings</span>
+          </Link>
+        </div>
 
         {/* Header */}
-        <div className="mb-6">
+        <header className="border-b border-slate-200/90 pb-5">
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
-              Table matching
+            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
+              Schema mapping
             </span>
             <span className="text-[10px] text-slate-300">/</span>
-            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-900">
+            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-700">
               Discover
             </span>
           </div>
-          <h1 className="text-[22px] sm:text-[24px] font-semibold tracking-[-0.02em] text-slate-900 leading-tight">
-            New table pair set
+          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-slate-900">
+            New schema mapping set
           </h1>
-          <p className="text-[13px] text-slate-500 mt-1 max-w-2xl">
-            Pick two systems and the agent proposes source → target table
-            matches. You edit every pair before saving.
+          <p className="text-xs sm:text-[13px] text-slate-500 mt-1 max-w-2xl leading-relaxed">
+            Select a source and target system to generate candidate schema
+            alignments. Every proposed schema and attribute rule can be reviewed
+            and edited before saving.
           </p>
-        </div>
+        </header>
 
-        {/* Error */}
+        {/* Error Alert */}
         {error && (
-          <div className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-[12px] text-red-800">
-            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-            <span className="flex-1 leading-relaxed">{error}</span>
+          <div className="flex items-start gap-2.5 rounded-xl border border-rose-200 bg-white px-4 py-3 text-xs text-rose-800">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
+            <span className="flex-1 break-words leading-relaxed">{error}</span>
             <button
               type="button"
               onClick={() => setError(null)}
-              className="shrink-0 text-red-600 hover:text-red-900"
+              className="shrink-0 text-rose-400 hover:text-rose-700"
               aria-label="Dismiss error"
             >
               <X className="w-3.5 h-3.5" />
@@ -330,62 +336,61 @@ function DiscoverInner() {
           </div>
         )}
 
-        {/* ── Live Streaming Agent Execution Console ──────── */}
+        {/* Live Execution Progress Card */}
         {submitting && (
-          <div className="rounded-xl border border-indigo-200 bg-gradient-to-b from-indigo-50/80 to-white p-5 shadow-xs space-y-4 animate-in fade-in duration-300">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-indigo-600 text-white flex items-center justify-center shadow-xs">
-                  <Sparkles className="w-4 h-4 animate-pulse" />
-                </div>
-                <div>
-                  <h3 className="text-[13px] font-semibold text-slate-900 flex items-center gap-2">
-                    Table Matching Agent Active
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-indigo-100 text-indigo-700 animate-pulse">
-                      LIVE STREAM
+          <div className="rounded-xl border border-slate-200 bg-white p-5 space-y-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-3 min-w-0">
+                <LoaderCircle className="w-5 h-5 animate-spin text-[#432DD7] shrink-0" />
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-xs sm:text-sm font-semibold text-slate-900">
+                      Schema Alignment Agent Running
+                    </h3>
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-[#F8FAFC] px-2 py-0.5 font-mono text-[10px] font-medium text-slate-700">
+                      <span className="h-1.5 w-1.5 rounded-full bg-[#432DD7] animate-pulse" />
+                      Active
                     </span>
-                  </h3>
-                  <p className="text-[11.5px] text-slate-600 font-medium">
-                    {streamingStatus || "Evaluating topological schemas..."}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5 break-words">
+                    {streamingStatus || "Evaluating topological schemas…"}
                   </p>
                 </div>
               </div>
-              <span className="text-[13px] font-mono font-semibold text-indigo-700 tabular-nums">
+              <span className="text-xs font-mono font-semibold text-slate-900 tabular-nums">
                 {streamingProgress}%
               </span>
             </div>
 
-            {/* Progress bar */}
-            <div className="w-full bg-slate-200/80 rounded-full h-1.5 overflow-hidden">
+            <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
               <div
-                className="bg-indigo-600 h-1.5 rounded-full transition-all duration-300 ease-out"
+                className="bg-[#432DD7] h-full rounded-full transition-all duration-300 ease-out"
                 style={{ width: `${streamingProgress}%` }}
               />
             </div>
 
-            {/* Live stream of matched pairs */}
             {streamedPairs.length > 0 && (
-              <div className="space-y-2 pt-2 border-t border-indigo-100/80">
-                <div className="flex items-center justify-between text-[11px] font-semibold text-slate-600">
-                  <span>Matched Candidates ({streamedPairs.length})</span>
+              <div className="space-y-2 pt-3 border-t border-slate-100">
+                <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  <span>Proposed Alignments ({streamedPairs.length})</span>
                   <span>Confidence</span>
                 </div>
-                <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
+                <div className="max-h-60 overflow-y-auto divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white">
                   {streamedPairs.map((p, idx) => (
                     <div
                       key={idx}
-                      className="flex items-center justify-between gap-2 p-2.5 rounded-lg border border-slate-200 bg-white shadow-xs text-[11.5px]"
+                      className="flex items-center justify-between gap-3 px-3.5 py-2.5 text-xs"
                     >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="font-mono font-medium text-slate-900 truncate">
+                      <div className="flex items-center gap-2 min-w-0 flex-wrap font-mono">
+                        <span className="font-semibold text-slate-900 break-all">
                           {p.source_table}
                         </span>
-                        <ArrowRight className="w-3 h-3 text-slate-400 shrink-0" />
-                        <span className="font-mono font-medium text-indigo-600 truncate">
+                        <ArrowRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span className="font-semibold text-slate-700 break-all">
                           {p.target_table}
                         </span>
                       </div>
-                      <span className="shrink-0 font-mono text-[11px] font-semibold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      <span className="shrink-0 font-mono text-[11px] font-semibold px-2 py-0.5 rounded border border-emerald-200 bg-emerald-50/70 text-emerald-700">
                         {(p.confidence_score * 100).toFixed(0)}%
                       </span>
                     </div>
@@ -396,33 +401,33 @@ function DiscoverInner() {
           </div>
         )}
 
-        {/* ── Form card ─────────────────────────────────── */}
-        <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-          <div className="px-5 py-3 border-b border-slate-100 bg-slate-50/60">
-            <h2 className="text-[13px] font-semibold text-slate-900">
-              Configuration
+        {/* Main Configuration Card */}
+        <div className="rounded-xl border border-slate-200 bg-white">
+          <div className="px-5 sm:px-6 py-4 border-b border-slate-100">
+            <h2 className="text-sm font-semibold text-slate-900">
+              Mapping Configuration
             </h2>
-            <p className="text-[11px] text-slate-500 mt-0.5">
-              All fields except reviewer instructions are required unless
-              marked optional.
+            <p className="text-xs text-slate-500 mt-0.5">
+              Define the mapping set identity, connected endpoints, and
+              matching thresholds.
             </p>
           </div>
 
-          <div className="p-5 space-y-5">
-            {/* ── Section 1: Identity ────────────────────── */}
+          <div className="p-5 sm:p-6 space-y-6">
+            {/* Section 1: Identity */}
             <Section title="Identity">
-              <div className="grid grid-cols-1 sm:grid-cols-[1fr_140px] gap-3">
-                <Field label="Pair set name" required>
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_150px] gap-4">
+                <Field label="Schema mapping set name" required>
                   <input
                     type="text"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. Customer migration pairs"
+                    placeholder="e.g. Customer CRM to OneLake Schema"
                     disabled={submitting}
                     className={inputClass}
                   />
                 </Field>
-                <Field label="Version">
+                <Field label="Version tag">
                   <input
                     type="text"
                     value={versionTag}
@@ -435,27 +440,27 @@ function DiscoverInner() {
               </div>
             </Section>
 
-            {/* ── Section 2: Systems ─────────────────────── */}
+            {/* Section 2: Systems */}
             <Section
-              title="Systems"
-              hint="Source tables come from the source system, target tables from the target system."
+              title="Connected Systems"
+              hint="Schemas are introspected from the source system and aligned against the target system."
             >
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Field label="Source system" required>
-                  <SystemPicker
+                  <SystemCustomDropdown
                     value={sourceSystemId}
                     onChange={setSourceSystemId}
                     kindFilter="SOURCE"
-                    placeholder="Search source systems…"
+                    placeholder="Select source system…"
                     disabled={submitting}
                   />
                 </Field>
                 <Field label="Target system" required>
-                  <SystemPicker
+                  <SystemCustomDropdown
                     value={targetSystemId}
                     onChange={setTargetSystemId}
                     kindFilter="TARGET"
-                    placeholder="Search target systems…"
+                    placeholder="Select target system…"
                     disabled={submitting}
                   />
                 </Field>
@@ -463,20 +468,20 @@ function DiscoverInner() {
               {sourceSystemId &&
                 targetSystemId &&
                 sourceSystemId === targetSystemId && (
-                  <p className="mt-2 text-[11px] text-red-700 flex items-center gap-1">
-                    <AlertTriangle className="w-3 h-3" />
-                    Source and target systems must differ.
+                  <p className="text-xs text-rose-600 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                    <span>Source and target systems must be different.</span>
                   </p>
                 )}
             </Section>
 
-            {/* ── Section 3: Ontology (optional) ─────────── */}
+            {/* Section 3: Ontology Grounding */}
             <Section
-              title="Ontology grounding"
-              hint="Optional. Concept bindings sharpen the matching. Without it, matching falls back to name similarity."
+              title="Ontology Grounding"
+              hint="Optional. Semantic concept bindings improve schema matching accuracy. Without an ontology, matching uses structural and lexical similarity."
             >
               <Field label="Ontology version">
-                <OntologyPicker
+                <OntologyCustomDropdown
                   projectId={projectId}
                   value={ontologyVersionId}
                   onChange={setOntologyVersionId}
@@ -485,24 +490,24 @@ function DiscoverInner() {
               </Field>
             </Section>
 
-            {/* ── Section 4: Matching ────────────────────── */}
-            <Section title="Matching">
-              <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3.5">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
+            {/* Section 4: Matching Strategy */}
+            <Section title="Matching Strategy">
+              <div className="rounded-xl border border-slate-200 bg-[#F8FAFC] p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 space-y-1">
                     <label
                       htmlFor="use-ai"
-                      className="cursor-pointer text-[12.5px] font-medium text-slate-900 block"
+                      className="cursor-pointer text-xs sm:text-[13px] font-semibold text-slate-900 block"
                     >
-                      AI-assisted matching
+                      Semantic LLM alignment
                     </label>
-                    <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                    <p className="text-xs text-slate-500 leading-relaxed">
                       Uses{" "}
-                      <span className="font-mono text-[10.5px] text-slate-700">
+                      <span className="font-mono text-[11px] text-slate-700">
                         gpt-oss-120b
                       </span>{" "}
-                      for semantic matching. Turn off for pure deterministic
-                      scoring.
+                      to evaluate business semantics and foreign-key topology.
+                      Disable for pure deterministic scoring.
                     </p>
                   </div>
                   <button
@@ -514,12 +519,12 @@ function DiscoverInner() {
                     onClick={() => setUseAi(!useAi)}
                     className={`relative mt-0.5 inline-flex h-[22px] w-10 shrink-0 items-center rounded-full border transition-colors disabled:opacity-40 ${
                       useAi
-                        ? "border-slate-900 bg-slate-900"
+                        ? "border-[#432DD7] bg-[#432DD7]"
                         : "border-slate-300 bg-slate-200"
                     }`}
                   >
                     <span
-                      className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                      className={`inline-block h-4 w-4 rounded-full bg-white shadow-xs transition-transform ${
                         useAi ? "translate-x-[19px]" : "translate-x-[3px]"
                       }`}
                     />
@@ -527,12 +532,12 @@ function DiscoverInner() {
                 </div>
               </div>
 
-              <div className="mt-4 space-y-2">
+              <div className="pt-2 space-y-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-semibold text-slate-700">
+                  <label className="text-xs font-medium text-slate-700">
                     Minimum confidence threshold
                   </label>
-                  <span className="text-[11px] font-mono font-semibold text-slate-900 tabular-nums">
+                  <span className="text-xs font-mono font-semibold text-slate-900 tabular-nums">
                     {formatConfidence(minConfidence)}
                   </span>
                 </div>
@@ -544,40 +549,39 @@ function DiscoverInner() {
                   value={minConfidence}
                   onChange={(e) => setMinConfidence(Number(e.target.value))}
                   disabled={submitting}
-                  className="w-full accent-slate-900 disabled:opacity-40"
+                  className="w-full accent-[#432DD7] disabled:opacity-40"
                 />
-                <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono">
                   <span>{formatConfidence(MIN_ALLOWED_CONFIDENCE)}</span>
                   <span>{formatConfidence(MAX_ALLOWED_CONFIDENCE)}</span>
                 </div>
-                <p className="text-[10.5px] text-slate-400 leading-relaxed">
-                  Pairs below this score are hidden. Lower = more candidates
-                  (noisier). Higher = fewer, stronger candidates.
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  Alignments below this threshold are filtered out automatically.
                 </p>
               </div>
             </Section>
 
-            {/* ── Section 5: Instructions ────────────────── */}
+            {/* Section 5: Instructions */}
             <Section
-              title="Reviewer instructions"
-              hint="Optional hints that guide the agent."
+              title="Reviewer Instructions"
+              hint="Optional domain rules or naming conventions to guide the schema agent."
             >
               <textarea
                 rows={3}
                 value={customInstructions}
                 onChange={(e) => setCustomInstructions(e.target.value)}
-                placeholder="e.g. Prioritize tables whose names start with 'cust_'. Ignore any table ending in '_backup'."
+                placeholder="e.g. Prioritize schemas prefixed with 'cust_' and ignore '_archive' or '_temp' objects."
                 disabled={submitting}
-                className={`${inputClass} resize-none`}
+                className="w-full px-3 py-2.5 rounded-lg border border-slate-200 bg-white text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-[#432DD7] transition disabled:opacity-50 resize-none"
               />
             </Section>
           </div>
 
-          {/* ── Actions ──────────────────────────────────── */}
-          <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-2 px-5 py-3 border-t border-slate-100 bg-slate-50/60">
+          {/* Footer Actions */}
+          <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-2.5 px-5 sm:px-6 py-4 border-t border-slate-100 bg-white rounded-b-xl">
             <Link
               href={`/table-matching?project_id=${encodeURIComponent(projectId)}`}
-              className="inline-flex items-center justify-center h-9 px-4 rounded-lg text-[12px] font-medium text-slate-600 hover:bg-slate-100 transition order-2 sm:order-1"
+              className="inline-flex items-center justify-center h-9 px-4 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-600 hover:bg-slate-50 transition"
             >
               Cancel
             </Link>
@@ -585,37 +589,32 @@ function DiscoverInner() {
               type="button"
               onClick={() => void submit()}
               disabled={!canSubmit}
-              className="order-1 sm:order-2 inline-flex items-center justify-center gap-1.5 h-9 px-4 rounded-lg bg-slate-900 text-white text-[12px] font-medium hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              className="inline-flex items-center justify-center gap-1.5 h-9 px-5 rounded-lg bg-[#432DD7] text-white text-xs font-medium hover:bg-[#3724B5] disabled:opacity-40 disabled:cursor-not-allowed transition"
             >
               {submitting ? (
                 <>
                   <LoaderCircle className="w-3.5 h-3.5 animate-spin" />
-                  Proposing…
+                  <span>Discovering schemas…</span>
                 </>
               ) : (
                 <>
-                  Propose pairs
+                  <span>Discover schema mappings</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </>
               )}
             </button>
           </div>
         </div>
-
-        <p className="mt-4 text-[11px] text-slate-400 text-center">
-          After proposing, you'll review each pair in the workbench before
-          column-level matching.
-        </p>
       </div>
     </div>
   );
 }
 
 // ═════════════════════════════════════════════════════════════
-// Shared style + layout bits
+// Layout Helpers
 // ═════════════════════════════════════════════════════════════
 const inputClass =
-  "w-full h-9 px-3 rounded-lg border border-slate-200 bg-white text-[12px] text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-900 transition disabled:opacity-50";
+  "w-full h-9 px-3 rounded-lg border border-slate-200 bg-white text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-[#432DD7] transition disabled:opacity-50";
 
 function Section({
   title,
@@ -627,15 +626,17 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="space-y-2">
-      <div className="flex items-baseline gap-2">
+    <section className="space-y-2.5">
+      <div>
         <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
           {title}
         </h3>
+        {hint && (
+          <p className="text-xs text-slate-400 leading-relaxed mt-0.5">
+            {hint}
+          </p>
+        )}
       </div>
-      {hint && (
-        <p className="text-[10.5px] text-slate-400 leading-relaxed">{hint}</p>
-      )}
       <div className="space-y-3">{children}</div>
     </section>
   );
@@ -652,9 +653,9 @@ function Field({
 }) {
   return (
     <div className="space-y-1.5">
-      <label className="text-[11px] font-semibold text-slate-700 block">
+      <label className="text-xs font-medium text-slate-700 block">
         {label}
-        {required && <span className="text-red-500 ml-0.5">*</span>}
+        {required && <span className="text-rose-500 ml-0.5">*</span>}
       </label>
       {children}
     </div>
@@ -662,9 +663,9 @@ function Field({
 }
 
 // ═════════════════════════════════════════════════════════════
-// SystemPicker — Popover + Command (searchable)
+// Custom Paginated System Dropdown
 // ═════════════════════════════════════════════════════════════
-function SystemPicker({
+function SystemCustomDropdown({
   value,
   onChange,
   kindFilter = "ALL",
@@ -681,6 +682,9 @@ function SystemPicker({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(0);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -714,165 +718,229 @@ function SystemPicker({
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const handleOutside = (e: MouseEvent) => {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    };
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    if (open) {
+      document.addEventListener("mousedown", handleOutside);
+      document.addEventListener("keydown", handleEsc);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleOutside);
+      document.removeEventListener("keydown", handleEsc);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [query]);
+
   const filtered = useMemo(() => {
     let list = systems;
     if (kindFilter !== "ALL") {
       list = list.filter((s) => s.kind === kindFilter);
     }
-    return list;
-  }, [systems, kindFilter]);
+    const q = query.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        s.system_id.toLowerCase().includes(q) ||
+        (s.connector_type || "").toLowerCase().includes(q)
+    );
+  }, [systems, kindFilter, query]);
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(filtered.length / DROPDOWN_PAGE_SIZE)
+  );
+  const paginated = useMemo(() => {
+    const start = page * DROPDOWN_PAGE_SIZE;
+    return filtered.slice(start, start + DROPDOWN_PAGE_SIZE);
+  }, [filtered, page]);
 
   const current = systems.find((s) => s.system_id === value);
 
   return (
-    <div className="space-y-1.5">
-      <div className="relative">
-        <button
-          type="button"
-          role="combobox"
-          aria-expanded={open}
-          disabled={disabled || loading}
-          onClick={() => setOpen((o) => !o)}
-          className="w-full h-9 px-3 rounded-lg border border-slate-200 bg-white text-[12px] text-left flex items-center justify-between gap-2 hover:border-slate-300 focus:outline-none focus:border-slate-900 transition disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <span className="min-w-0 flex-1 truncate">
-            {current ? (
-              <span className="flex items-center gap-2">
-                <span className="font-mono font-semibold text-slate-900 truncate">
-                  {current.name}
-                </span>
-                <span className="text-[10px] text-slate-400 shrink-0">
-                  {current.kind}
-                </span>
+    <div ref={containerRef} className="space-y-1.5 relative">
+      <button
+        type="button"
+        role="combobox"
+        aria-expanded={open}
+        disabled={disabled || loading}
+        onClick={() => setOpen((o) => !o)}
+        className={`w-full min-h-[38px] px-3 py-1.5 rounded-lg border bg-white text-xs text-left flex items-center justify-between gap-2 transition disabled:opacity-50 disabled:cursor-not-allowed ${
+          open
+            ? "border-[#432DD7] ring-[3px] ring-[#432DD7]/10"
+            : "border-slate-200 hover:border-slate-300"
+        }`}
+      >
+        <div className="min-w-0 flex-1">
+          {current ? (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-semibold text-slate-900 break-words">
+                {current.name}
               </span>
-            ) : (
-              <span className="text-slate-400">
-                {loading
-                  ? "Loading systems…"
-                  : filtered.length === 0
-                  ? "No systems registered"
-                  : placeholder || "Select a system"}
-              </span>
-            )}
-          </span>
-          <ChevronsUpDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-        </button>
-
-        {open && (
-          <>
-            <div
-              className="fixed inset-0 z-40"
-              onClick={() => setOpen(false)}
-            />
-            <div className="absolute z-50 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden flex flex-col max-h-72">
-              <SystemSearchList
-                systems={filtered}
-                currentValue={value}
-                onSelect={(id) => {
-                  onChange(id);
-                  setOpen(false);
-                }}
-              />
+              {current.connector_type && (
+                <span className="font-mono text-[10.5px] text-slate-400">
+                  {current.connector_type}
+                </span>
+              )}
             </div>
-          </>
-        )}
-      </div>
+          ) : (
+            <span className="text-slate-400">
+              {loading
+                ? "Loading systems…"
+                : filtered.length === 0
+                ? "No systems registered"
+                : placeholder || "Select a system"}
+            </span>
+          )}
+        </div>
+        <ChevronDown
+          className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${
+            open ? "rotate-180 text-[#432DD7]" : ""
+          }`}
+        />
+      </button>
+
+      {open && (
+        <div className="absolute z-50 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden flex flex-col">
+          {/* Search Input */}
+          <div className="p-2 border-b border-slate-100 bg-white">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <input
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search systems by name or type…"
+                className="w-full h-8 pl-8 pr-7 rounded-lg border border-slate-200 bg-[#F8FAFC] text-xs text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-[#432DD7] focus:outline-none"
+              />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => setQuery("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Options */}
+          <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
+            {paginated.length === 0 ? (
+              <div className="p-5 text-center text-xs text-slate-400">
+                No matching systems
+              </div>
+            ) : (
+              paginated.map((s) => {
+                const isSel = s.system_id === value;
+                return (
+                  <button
+                    key={s.system_id}
+                    type="button"
+                    onClick={() => {
+                      onChange(s.system_id);
+                      setOpen(false);
+                    }}
+                    className={`w-full text-left px-3.5 py-2.5 flex items-start justify-between gap-2 transition ${
+                      isSel ? "bg-[#F8FAFC]" : "hover:bg-[#F8FAFC]"
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1 space-y-0.5">
+                      <div
+                        className={`text-xs break-words ${
+                          isSel
+                            ? "font-semibold text-[#432DD7]"
+                            : "font-medium text-slate-900"
+                        }`}
+                      >
+                        {s.name}
+                      </div>
+                      <div className="text-[10.5px] text-slate-400 font-mono break-all">
+                        {s.system_id}
+                        {s.connector_type ? ` · ${s.connector_type}` : ""}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-[9.5px] font-mono font-semibold uppercase px-1.5 py-0.5 rounded border border-slate-200 bg-white text-slate-600">
+                        {s.kind}
+                      </span>
+                      {isSel && (
+                        <Check className="w-3.5 h-3.5 text-[#432DD7]" />
+                      )}
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+
+          {/* Pagination Footer */}
+          <div className="px-3 py-2 border-t border-slate-100 bg-[#F8FAFC] flex items-center justify-between text-[11px] text-slate-500">
+            <span className="font-mono">
+              {filtered.length === 0
+                ? "0 systems"
+                : `${page * DROPDOWN_PAGE_SIZE + 1}–${Math.min(
+                    filtered.length,
+                    (page + 1) * DROPDOWN_PAGE_SIZE
+                  )} of ${filtered.length}`}
+            </span>
+            {totalPages > 1 && (
+              <div className="inline-flex items-center gap-1">
+                <button
+                  type="button"
+                  disabled={page === 0}
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  className="p-1 rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <span className="px-1 font-mono text-slate-700">
+                  {page + 1}/{totalPages}
+                </span>
+                <button
+                  type="button"
+                  disabled={page >= totalPages - 1}
+                  onClick={() =>
+                    setPage((p) => Math.min(totalPages - 1, p + 1))
+                  }
+                  className="p-1 rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {error && (
-        <p className="text-[10.5px] text-red-700 flex items-center gap-1">
-          <AlertTriangle className="w-3 h-3" />
-          {error}
+        <p className="text-xs text-rose-600 flex items-center gap-1">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+          <span>{error}</span>
         </p>
       )}
     </div>
   );
 }
 
-function SystemSearchList({
-  systems,
-  currentValue,
-  onSelect,
-}: {
-  systems: SystemOption[];
-  currentValue: string;
-  onSelect: (id: string) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return systems;
-    return systems.filter(
-      (s) =>
-        s.name.toLowerCase().includes(q) ||
-        s.system_id.toLowerCase().includes(q) ||
-        (s.connector_type || "").toLowerCase().includes(q)
-    );
-  }, [systems, query]);
-
-  return (
-    <>
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 shrink-0">
-        <input
-          autoFocus
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search systems…"
-          className="flex-1 text-[11.5px] bg-transparent outline-none text-slate-800 placeholder:text-slate-400"
-        />
-        {query && (
-          <button
-            onClick={() => setQuery("")}
-            className="text-slate-400 hover:text-slate-700 text-[10px]"
-            type="button"
-          >
-            Clear
-          </button>
-        )}
-      </div>
-      <div className="overflow-y-auto">
-        {filtered.length === 0 ? (
-          <div className="p-4 text-center text-[11px] text-slate-400">
-            No systems match
-          </div>
-        ) : (
-          filtered.map((s) => {
-            const isSel = s.system_id === currentValue;
-            return (
-              <button
-                key={s.system_id}
-                type="button"
-                onClick={() => onSelect(s.system_id)}
-                className={`w-full text-left px-3 py-2 flex items-center gap-2 transition ${
-                  isSel ? "bg-slate-100" : "hover:bg-slate-50"
-                }`}
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="text-[11.5px] font-medium text-slate-900 truncate">
-                    {s.name}
-                  </div>
-                  <div className="text-[10px] text-slate-400 font-mono truncate">
-                    {s.system_id}
-                    {s.connector_type ? ` · ${s.connector_type}` : ""}
-                  </div>
-                </div>
-                <span className="text-[9px] font-mono font-bold uppercase px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 shrink-0">
-                  {s.kind}
-                </span>
-                {isSel && (
-                  <Check className="w-3.5 h-3.5 text-slate-700 shrink-0" />
-                )}
-              </button>
-            );
-          })
-        )}
-      </div>
-    </>
-  );
-}
-
 // ═════════════════════════════════════════════════════════════
-// OntologyPicker — Popover with "no ontology" option
+// Custom Paginated Ontology Dropdown
 // ═════════════════════════════════════════════════════════════
-function OntologyPicker({
+function OntologyCustomDropdown({
   projectId,
   value,
   onChange,
@@ -887,6 +955,9 @@ function OntologyPicker({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(0);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -921,111 +992,222 @@ function OntologyPicker({
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const handleOutside = (e: MouseEvent) => {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    };
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    if (open) {
+      document.addEventListener("mousedown", handleOutside);
+      document.addEventListener("keydown", handleEsc);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleOutside);
+      document.removeEventListener("keydown", handleEsc);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [query]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter(
+      (o) =>
+        o.name.toLowerCase().includes(q) ||
+        o.ontology_version_id.toLowerCase().includes(q) ||
+        (o.domain || "").toLowerCase().includes(q)
+    );
+  }, [options, query]);
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(filtered.length / DROPDOWN_PAGE_SIZE)
+  );
+  const paginated = useMemo(() => {
+    const start = page * DROPDOWN_PAGE_SIZE;
+    return filtered.slice(start, start + DROPDOWN_PAGE_SIZE);
+  }, [filtered, page]);
+
   const current = options.find((o) => o.ontology_version_id === value);
 
   return (
-    <div className="space-y-1.5">
-      <div className="relative">
-        <button
-          type="button"
-          role="combobox"
-          aria-expanded={open}
-          disabled={disabled || loading}
-          onClick={() => setOpen((o) => !o)}
-          className="w-full h-9 px-3 rounded-lg border border-slate-200 bg-white text-[12px] text-left flex items-center justify-between gap-2 hover:border-slate-300 focus:outline-none focus:border-slate-900 transition disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <span className="min-w-0 flex-1 truncate">
-            {current ? (
-              <span className="flex items-center gap-2">
-                <span className="font-mono font-semibold text-slate-900 truncate">
-                  {current.name}
-                </span>
-                <span className="text-[10px] text-slate-400 font-mono shrink-0">
-                  v{current.version_tag}
-                </span>
+    <div ref={containerRef} className="space-y-1.5 relative">
+      <button
+        type="button"
+        role="combobox"
+        aria-expanded={open}
+        disabled={disabled || loading}
+        onClick={() => setOpen((o) => !o)}
+        className={`w-full min-h-[38px] px-3 py-1.5 rounded-lg border bg-white text-xs text-left flex items-center justify-between gap-2 transition disabled:opacity-50 disabled:cursor-not-allowed ${
+          open
+            ? "border-[#432DD7] ring-[3px] ring-[#432DD7]/10"
+            : "border-slate-200 hover:border-slate-300"
+        }`}
+      >
+        <div className="min-w-0 flex-1">
+          {current ? (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-semibold text-slate-900 break-words">
+                {current.name}
               </span>
-            ) : (
-              <span className="text-slate-400">
-                {loading
-                  ? "Loading ontologies…"
-                  : options.length === 0
-                  ? "No ontologies yet — build one first"
-                  : "No ontology (name-only matching)"}
+              <span className="text-[10.5px] text-slate-400 font-mono">
+                v{current.version_tag}
               </span>
-            )}
-          </span>
-          <ChevronsUpDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-        </button>
+            </div>
+          ) : (
+            <span className="text-slate-400">
+              {loading
+                ? "Loading ontologies…"
+                : "No ontology selected (structural & lexical matching)"}
+            </span>
+          )}
+        </div>
+        <ChevronDown
+          className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${
+            open ? "rotate-180 text-[#432DD7]" : ""
+          }`}
+        />
+      </button>
 
-        {open && (
-          <>
-            <div
-              className="fixed inset-0 z-40"
-              onClick={() => setOpen(false)}
-            />
-            <div className="absolute z-50 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden flex flex-col max-h-72">
-              <div className="overflow-y-auto">
-                {/* No-ontology option */}
+      {open && (
+        <div className="absolute z-50 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden flex flex-col">
+          {/* Search Input */}
+          <div className="p-2 border-b border-slate-100 bg-white">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <input
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search ontologies by name or domain…"
+                className="w-full h-8 pl-8 pr-7 rounded-lg border border-slate-200 bg-[#F8FAFC] text-xs text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-[#432DD7] focus:outline-none"
+              />
+              {query && (
                 <button
                   type="button"
+                  onClick={() => setQuery("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Options */}
+          <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
+            <button
+              type="button"
+              onClick={() => {
+                onChange("");
+                setOpen(false);
+              }}
+              className={`w-full text-left px-3.5 py-2.5 flex items-center justify-between gap-2 text-xs transition ${
+                !value ? "bg-[#F8FAFC]" : "hover:bg-[#F8FAFC]"
+              }`}
+            >
+              <span className="text-slate-500">
+                No ontology — structural & lexical matching
+              </span>
+              {!value && <Check className="w-3.5 h-3.5 text-[#432DD7]" />}
+            </button>
+
+            {paginated.map((o) => {
+              const isSel = o.ontology_version_id === value;
+              return (
+                <button
+                  key={o.ontology_version_id}
+                  type="button"
                   onClick={() => {
-                    onChange("");
+                    onChange(o.ontology_version_id);
                     setOpen(false);
                   }}
-                  className={`w-full text-left px-3 py-2 flex items-center gap-2 text-[11.5px] transition ${
-                    !value ? "bg-slate-100" : "hover:bg-slate-50"
+                  className={`w-full text-left px-3.5 py-2.5 flex items-start justify-between gap-2 transition ${
+                    isSel ? "bg-[#F8FAFC]" : "hover:bg-[#F8FAFC]"
                   }`}
                 >
-                  <span className="flex-1 italic text-slate-500">
-                    No ontology — name-only matching
-                  </span>
-                  {!value && (
-                    <Check className="w-3.5 h-3.5 text-slate-700 shrink-0" />
-                  )}
-                </button>
-                {options.map((o) => {
-                  const isSel = o.ontology_version_id === value;
-                  return (
-                    <button
-                      key={o.ontology_version_id}
-                      type="button"
-                      onClick={() => {
-                        onChange(o.ontology_version_id);
-                        setOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2 flex items-center gap-2 transition border-t border-slate-50 ${
-                        isSel ? "bg-slate-100" : "hover:bg-slate-50"
+                  <div className="min-w-0 flex-1 space-y-0.5">
+                    <div
+                      className={`text-xs break-words ${
+                        isSel
+                          ? "font-semibold text-[#432DD7]"
+                          : "font-medium text-slate-900"
                       }`}
                     >
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[11.5px] font-medium text-slate-900 truncate">
-                          {o.name}
-                        </div>
-                        <div className="text-[10px] text-slate-400 font-mono truncate">
-                          v{o.version_tag}
-                          {o.domain ? ` · ${o.domain}` : ""}
-                        </div>
-                      </div>
-                      {isSel && (
-                        <Check className="w-3.5 h-3.5 text-slate-700 shrink-0" />
-                      )}
-                    </button>
-                  );
-                })}
-                {options.length === 0 && !loading && (
-                  <div className="px-3 py-4 text-center text-[11px] text-slate-400">
-                    No ontologies in this project
+                      {o.name}
+                    </div>
+                    <div className="text-[10.5px] text-slate-400 font-mono break-all">
+                      v{o.version_tag}
+                      {o.domain ? ` · ${o.domain}` : ""}
+                    </div>
                   </div>
-                )}
+                  {isSel && (
+                    <Check className="w-3.5 h-3.5 text-[#432DD7] shrink-0 mt-0.5" />
+                  )}
+                </button>
+              );
+            })}
+
+            {paginated.length === 0 && !loading && (
+              <div className="px-3.5 py-4 text-center text-xs text-slate-400">
+                No matching ontologies
               </div>
-            </div>
-          </>
-        )}
-      </div>
+            )}
+          </div>
+
+          {/* Pagination Footer */}
+          <div className="px-3 py-2 border-t border-slate-100 bg-[#F8FAFC] flex items-center justify-between text-[11px] text-slate-500">
+            <span className="font-mono">
+              {filtered.length === 0
+                ? "0 ontologies"
+                : `${page * DROPDOWN_PAGE_SIZE + 1}–${Math.min(
+                    filtered.length,
+                    (page + 1) * DROPDOWN_PAGE_SIZE
+                  )} of ${filtered.length}`}
+            </span>
+            {totalPages > 1 && (
+              <div className="inline-flex items-center gap-1">
+                <button
+                  type="button"
+                  disabled={page === 0}
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  className="p-1 rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <span className="px-1 font-mono text-slate-700">
+                  {page + 1}/{totalPages}
+                </span>
+                <button
+                  type="button"
+                  disabled={page >= totalPages - 1}
+                  onClick={() =>
+                    setPage((p) => Math.min(totalPages - 1, p + 1))
+                  }
+                  className="p-1 rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {error && (
-        <p className="text-[10.5px] text-red-700 flex items-center gap-1">
-          <AlertTriangle className="w-3 h-3" />
-          {error}
+        <p className="text-xs text-rose-600 flex items-center gap-1">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+          <span>{error}</span>
         </p>
       )}
     </div>
