@@ -1,4 +1,3 @@
-// src/app/(protected)/table-matching/[id]/page.tsx
 "use client";
 
 import {
@@ -10,9 +9,10 @@ import {
   useState,
 } from "react";
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
+  ArrowRight,
   RefreshCw,
   Save,
   Plus,
@@ -23,14 +23,31 @@ import {
   Table2,
   LoaderCircle,
   AlertTriangle,
+  CheckCircle2,
+  Shield,
+  Sparkles,
+  Database,
+  Filter,
+  Check,
   X,
+  Play,
+  FileCheck2,
+  SlidersHorizontal,
+  ExternalLink,
+  Layers,
+  ArrowRightLeft,
 } from "lucide-react";
 import { toast } from "sonner";
 
-// ═════════════════════════════════════════════════════════════
-// Constants + helpers
-// ═════════════════════════════════════════════════════════════
 import { API_V1 } from "@/lib/api-config";
+import {
+  pairMappingApi,
+  type PairMappingSet,
+  type PairBlock,
+  type ColumnRule,
+} from "@/lib/pair-mapping-api";
+import { ColumnPicker, type ColumnOption } from "@/components/pair-mapping/ColumnPicker";
+import { TransformPicker } from "@/components/pair-mapping/TransformPicker";
 
 const API_BASE = API_V1;
 
@@ -53,27 +70,21 @@ function resolveProjectId(urlParam: string | null): string {
   return "proj-default";
 }
 
-// ═════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────
 // Types
-// ═════════════════════════════════════════════════════════════
-interface MatchedColumn {
-  source_col: string;
-  target_col: string;
-  concept: string;
-}
-
+// ─────────────────────────────────────────────────────────────
 interface TablePair {
   source_table: string;
   target_table: string;
   confidence_score: number;
-  match_status: "MATCHED" | "UNMATCHED" | "MANUAL_OVERRIDE" | string;
+  match_status: "MATCHED" | "UNMATCHED" | "MANUAL_OVERRIDE" | "APPROVED" | "REJECTED" | string;
   matched_concepts: string[];
-  matched_columns: MatchedColumn[];
-  matched_columns_count: number;
-  rationale: string;
-  requires_masking: boolean;
-  rules_applied: string[];
-  depends_on: string[];
+  matched_columns?: Array<{ source_col: string; target_col: string; concept?: string }>;
+  matched_columns_count?: number;
+  rationale?: string;
+  requires_masking?: boolean;
+  rules_applied?: string[];
+  depends_on?: string[];
 }
 
 interface TableMappingSet {
@@ -89,42 +100,64 @@ interface TableMappingSet {
   created_at: number;
 }
 
-// ═════════════════════════════════════════════════════════════
-// Page wrapper
-// ═════════════════════════════════════════════════════════════
-export default function TablePairReviewPage() {
+export default function UnifiedMappingStudioPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-[calc(100vh-4rem)] bg-slate-50 flex items-center justify-center">
-          <LoaderCircle className="w-4 h-4 animate-spin text-slate-400" />
+        <div className="min-h-[calc(100vh-4rem)] bg-slate-900 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3 text-slate-400">
+            <LoaderCircle className="w-8 h-8 animate-spin text-blue-500" />
+            <span className="text-sm font-medium">Loading Mapping Studio…</span>
+          </div>
         </div>
       }
     >
-      <ReviewInner />
+      <UnifiedStudioInner />
     </Suspense>
   );
 }
 
-// ═════════════════════════════════════════════════════════════
-// Inner
-// ═════════════════════════════════════════════════════════════
-function ReviewInner() {
+function UnifiedStudioInner() {
+  const router = useRouter();
   const params = useParams();
   const searchParams = useSearchParams();
   const setId = String(params?.id || "");
   const projectId = resolveProjectId(searchParams.get("project_id"));
 
-  const [set, setSet] = useState<TableMappingSet | null>(null);
-  const [pairs, setPairs] = useState<TablePair[]>([]);
-  const [baselinePairs, setBaselinePairs] = useState<TablePair[]>([]);
-
+  // ── States ───────────────────────────────────────────
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const [expandedIdx, setExpandedIdx] = useState<Set<number>>(new Set());
-  const [addPairOpen, setAddPairOpen] = useState(false);
+
+  // Table mapping set & pairs
+  const [tms, setTms] = useState<TableMappingSet | null>(null);
+  const [tablePairs, setTablePairs] = useState<TablePair[]>([]);
+  const [baselineTablePairs, setBaselineTablePairs] = useState<TablePair[]>([]);
+  const [selectedPairIndex, setSelectedPairIndex] = useState<number>(0);
+
+  // Pair mapping set (column rules)
+  const [pms, setPms] = useState<PairMappingSet | null>(null);
+  const [runningAiPairId, setRunningAiPairId] = useState<string | null>(null);
+  const [runningAiAll, setRunningAiAll] = useState(false);
+
+  // Column edits per pair
+  const [columnEdits, setColumnEdits] = useState<Record<string, Record<string, Partial<ColumnRule>>>>({});
+  const [columnSearch, setColumnSearch] = useState("");
+  const [columnStatusFilter, setColumnStatusFilter] = useState<"ALL" | "MATCHED" | "UNMATCHED" | "MANUAL">("ALL");
+
+  // System & dataset column options
+  const [datasetColumns, setDatasetColumns] = useState<Record<string, ColumnOption[]>>({});
+
+  // Human Review & Sign-Off
+  const [reviewerName, setReviewerName] = useState("Lead Data Architect");
+  const [reviewComments, setReviewComments] = useState("");
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalized, setFinalized] = useState(false);
+
+  // Active view tab
+  const [activeTab, setActiveTab] = useState<"studio" | "table_matrix" | "signoff">("studio");
+  const [tableFilter, setTableFilter] = useState<"ALL" | "APPROVED" | "PENDING">("ALL");
+  const [tableSearch, setTableSearch] = useState("");
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -134,35 +167,102 @@ function ReviewInner() {
     };
   }, []);
 
-  // ── Load ─────────────────────────────────────────────
-  const load = useCallback(async () => {
+  // ── 1. Fetch or Initialize Sets ──────────────────────
+  const loadData = useCallback(async () => {
     if (!setId) {
       setLoading(false);
-      setError("No table-pair set ID in URL");
+      setError("No mapping set ID found in URL.");
       return;
     }
     setLoading(true);
     setError(null);
+
     try {
-      const res = await fetch(
-        `${API_BASE}/mapping-sets/${encodeURIComponent(
-          projectId
-        )}/table-pairs/${encodeURIComponent(setId)}`,
-        { headers: authHeaders() }
-      );
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.detail || `Load failed (${res.status})`);
+      // Step A: Load TableMappingSet
+      let loadedTms: TableMappingSet | null = null;
+      let loadedPms: PairMappingSet | null = null;
+
+      if (setId.startsWith("pms-")) {
+        // ID is a PairMappingSet
+        loadedPms = await pairMappingApi.get(setId);
+        if (loadedPms.table_mapping_set_id) {
+          const tmsRes = await fetch(
+            `${API_BASE}/mapping-sets/${encodeURIComponent(projectId)}/table-pairs/${encodeURIComponent(loadedPms.table_mapping_set_id)}`,
+            { headers: authHeaders() }
+          );
+          if (tmsRes.ok) {
+            loadedTms = await tmsRes.json();
+          }
+        }
+      } else {
+        // ID is a TableMappingSet
+        const tmsRes = await fetch(
+          `${API_BASE}/mapping-sets/${encodeURIComponent(projectId)}/table-pairs/${encodeURIComponent(setId)}`,
+          { headers: authHeaders() }
+        );
+        if (!tmsRes.ok) {
+          const b = await tmsRes.json().catch(() => ({}));
+          throw new Error(b?.detail || `Failed to load table pairs (${tmsRes.status})`);
+        }
+        loadedTms = await tmsRes.json();
+
+        // Check if matching PairMappingSet exists
+        const existingPmsList = await pairMappingApi.list(projectId, setId).catch(() => []);
+        if (existingPmsList.length > 0) {
+          loadedPms = existingPmsList[0];
+        } else {
+          // Initialize PairMappingSet from table set
+          try {
+            loadedPms = await pairMappingApi.createFromTableSet(projectId, {
+              table_mapping_set_id: setId,
+              name: loadedTms?.name || "Auto-Generated Column Mapping Set",
+              version_tag: loadedTms?.version_tag || "1.0.0",
+            });
+          } catch (initErr) {
+            console.warn("Could not auto-create pair mapping set:", initErr);
+          }
+        }
       }
-      const data: TableMappingSet = await res.json();
+
       if (!mountedRef.current) return;
-      setSet(data);
-      const copy = (data.pairs || []).map((p) => ({ ...p }));
-      setPairs(copy);
-      setBaselinePairs(copy.map((p) => ({ ...p })));
-    } catch (e: any) {
+
+      if (loadedTms) {
+        setTms(loadedTms);
+        const pairsCopy = (loadedTms.pairs || []).map((p) => ({ ...p }));
+        setTablePairs(pairsCopy);
+        setBaselineTablePairs(pairsCopy.map((p) => ({ ...p })));
+      }
+
+      if (loadedPms) {
+        setPms(loadedPms);
+        if (loadedPms.status === "APPROVED") setFinalized(true);
+      }
+
+      // Load dataset column schemas for pickers
+      if (loadedTms?.source_system_id) {
+        try {
+          const dsRes = await fetch(`${API_BASE}/datasets?system_id=${encodeURIComponent(loadedTms.source_system_id)}`, {
+            headers: authHeaders(),
+          });
+          if (dsRes.ok) {
+            const datasets = await dsRes.json();
+            const colMap: Record<string, ColumnOption[]> = {};
+            for (const ds of datasets) {
+              const tblName = ds.physical_name || ds.dataset_name;
+              colMap[tblName] = (ds.fields || []).map((f: any) => ({
+                name: f.name,
+                datatype: f.datatype || "string",
+              }));
+            }
+            if (mountedRef.current) setDatasetColumns(colMap);
+          }
+        } catch {
+          // non-blocking
+        }
+      }
+    } catch (err: any) {
       if (mountedRef.current) {
-        setError(e?.message || "Failed to load set");
+        setError(err?.message || "Failed to load mapping studio data.");
       }
     } finally {
       if (mountedRef.current) setLoading(false);
@@ -170,897 +270,1060 @@ function ReviewInner() {
   }, [setId, projectId]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void loadData();
+  }, [loadData]);
 
-  // ── Dirty detection ──────────────────────────────────
-  const dirty = useMemo(() => {
-    if (pairs.length !== baselinePairs.length) return true;
-    const k = (p: TablePair) =>
-      `${p.source_table}::${p.target_table}::${p.confidence_score}::${p.requires_masking}::${p.rationale}`;
-    const a = pairs.map(k).sort();
-    const b = baselinePairs.map(k).sort();
-    return a.some((v, i) => v !== b[i]);
-  }, [pairs, baselinePairs]);
+  // ── Selected Pair & Available Columns ───────────────
+  const selectedPair = tablePairs[selectedPairIndex] || null;
 
-  // ── Duplicate detection ──────────────────────────────
-  const duplicateKeys = useMemo(() => {
-    const seen = new Map<string, number>();
-    const dup = new Set<string>();
-    for (const p of pairs) {
-      const k = `${p.source_table}::${p.target_table}`;
-      if (seen.has(k)) dup.add(k);
-      seen.set(k, (seen.get(k) || 0) + 1);
+  const currentPairBlock: PairBlock | null = useMemo(() => {
+    if (!pms || !selectedPair) return null;
+    return (
+      pms.pairs.find(
+        (b) =>
+          b.source_table.toLowerCase() === selectedPair.source_table.toLowerCase() &&
+          b.target_table.toLowerCase() === selectedPair.target_table.toLowerCase()
+      ) || null
+    );
+  }, [pms, selectedPair]);
+
+  const sourceColumnOptions: ColumnOption[] = useMemo(() => {
+    if (!selectedPair) return [];
+    const direct = datasetColumns[selectedPair.source_table];
+    if (direct && direct.length > 0) return direct;
+
+    // Fallback: extract from seeded matched_columns or known rules
+    const names = new Set<string>();
+    for (const mc of selectedPair.matched_columns || []) {
+      if (mc.source_col) names.add(mc.source_col);
     }
-    return dup;
-  }, [pairs]);
+    for (const col of currentPairBlock?.columns || []) {
+      if (col.matched_source_column) names.add(col.matched_source_column);
+    }
+    return Array.from(names).map((n) => ({ name: n, datatype: "string" }));
+  }, [selectedPair, datasetColumns, currentPairBlock]);
 
-  const hasDuplicates = duplicateKeys.size > 0;
+  // ── Filtered Column Rules for Selected Pair ─────────
+  const visibleColumnRules = useMemo(() => {
+    if (!currentPairBlock) return [];
+    const pairId = currentPairBlock.pair_id;
+    const pairEdits = columnEdits[pairId] || {};
 
-  // ── Mutators ─────────────────────────────────────────
-  const updatePair = useCallback(
-    (index: number, patch: Partial<TablePair>) => {
-      setPairs((prev) => {
-        const next = [...prev];
-        next[index] = { ...next[index], ...patch };
-        return next;
-      });
-    },
-    []
-  );
+    let list = currentPairBlock.columns.map((c) => {
+      const patch = pairEdits[c.rule_id] || {};
+      return { ...c, ...patch };
+    });
 
-  const removePair = useCallback((index: number) => {
-    setPairs((prev) => prev.filter((_, i) => i !== index));
-    setExpandedIdx((prev) => {
-      const next = new Set<number>();
-      prev.forEach((i) => {
-        if (i < index) next.add(i);
-        else if (i > index) next.add(i - 1);
-      });
+    // Filter by search query
+    if (columnSearch.trim()) {
+      const q = columnSearch.toLowerCase().trim();
+      list = list.filter(
+        (c) =>
+          c.target_column.toLowerCase().includes(q) ||
+          (c.matched_source_column || "").toLowerCase().includes(q) ||
+          (c.transformation_rule || "").toLowerCase().includes(q)
+      );
+    }
+
+    // Filter by status
+    if (columnStatusFilter === "MATCHED") {
+      list = list.filter((c) => c.status === "MATCHED" && !!c.matched_source_column);
+    } else if (columnStatusFilter === "UNMATCHED") {
+      list = list.filter((c) => c.status === "UNMATCHED" || !c.matched_source_column);
+    } else if (columnStatusFilter === "MANUAL") {
+      list = list.filter((c) => c.status === "MANUAL_OVERRIDE");
+    }
+
+    return list;
+  }, [currentPairBlock, columnEdits, columnSearch, columnStatusFilter]);
+
+  // ── Progress & Coverage Calculations ────────────────
+  const stats = useMemo(() => {
+    const totalTables = tablePairs.length;
+    const approvedTables = tablePairs.filter(
+      (p) => p.match_status === "APPROVED" || p.match_status === "MATCHED"
+    ).length;
+
+    let totalCols = 0;
+    let mappedCols = 0;
+
+    for (const b of pms?.pairs || []) {
+      for (const c of b.columns) {
+        totalCols++;
+        if (c.matched_source_column) mappedCols++;
+      }
+    }
+
+    const avgConfidence =
+      totalTables > 0
+        ? tablePairs.reduce((acc, p) => acc + (p.confidence_score || 0), 0) / totalTables
+        : 0;
+
+    return {
+      totalTables,
+      approvedTables,
+      totalCols,
+      mappedCols,
+      colPct: totalCols > 0 ? Math.round((mappedCols / totalCols) * 100) : 0,
+      avgConfidence: (avgConfidence * 100).toFixed(0),
+    };
+  }, [tablePairs, pms]);
+
+  // ── Mutators: Table Pair Approvals & Overrides ───────
+  const handleToggleTableApproval = (index: number) => {
+    setTablePairs((prev) => {
+      const next = [...prev];
+      const curr = next[index];
+      const isApproved = curr.match_status === "APPROVED";
+      next[index] = {
+        ...curr,
+        match_status: isApproved ? "PENDING_REVIEW" : "APPROVED",
+      };
       return next;
     });
-  }, []);
+  };
 
-  const addPair = useCallback(
-    (sourceTable: string, targetTable: string): boolean => {
-      const s = sourceTable.trim();
-      const t = targetTable.trim();
-      if (!s || !t) return false;
-      if (pairs.some((p) => p.source_table === s && p.target_table === t)) {
-        return false;
-      }
-      setPairs((prev) => [
-        ...prev,
-        {
-          source_table: s,
-          target_table: t,
-          confidence_score: 1,
-          match_status: "MANUAL_OVERRIDE",
-          matched_concepts: [],
-          matched_columns: [],
-          matched_columns_count: 0,
-          rationale: "Manually added by reviewer.",
-          requires_masking: false,
-          rules_applied: [],
-          depends_on: [],
+  const handleRejectTable = (index: number) => {
+    setTablePairs((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], match_status: "REJECTED" };
+      return next;
+    });
+    toast.info("Table pair marked as rejected.");
+  };
+
+  // ── Mutators: Column Rule Edits ──────────────────────
+  const handleEditColumn = (ruleId: string, patch: Partial<ColumnRule>) => {
+    if (!currentPairBlock) return;
+    const pairId = currentPairBlock.pair_id;
+    setColumnEdits((prev) => ({
+      ...prev,
+      [pairId]: {
+        ...(prev[pairId] || {}),
+        [ruleId]: {
+          ...(prev[pairId]?.[ruleId] || {}),
+          ...patch,
+          status: "MANUAL_OVERRIDE",
         },
-      ]);
-      return true;
-    },
-    [pairs]
-  );
+      },
+    }));
+  };
 
-  // ── Save ─────────────────────────────────────────────
-  const save = useCallback(async () => {
-    if (hasDuplicates) {
-      toast.error("Cannot save — duplicates detected", {
-        description: `${duplicateKeys.size} duplicate pair${
-          duplicateKeys.size === 1 ? "" : "s"
-        }. Remove them first.`,
-      });
-      return;
-    }
-    if (!dirty) {
-      toast.info("Nothing to save.");
-      return;
-    }
+  // ── Save Table Pairs (TMS) ───────────────────────────
+  const saveTablePairs = async () => {
+    if (!tms) return;
     setSaving(true);
-    const loadingId = toast.loading("Saving…");
     try {
       const res = await fetch(
-        `${API_BASE}/mapping-sets/${encodeURIComponent(
-          projectId
-        )}/table-pairs/${encodeURIComponent(setId)}`,
+        `${API_BASE}/mapping-sets/${encodeURIComponent(projectId)}/table-pairs/${encodeURIComponent(tms.table_mapping_set_id)}`,
         {
           method: "PUT",
           headers: authHeaders(),
-          body: JSON.stringify({ pairs }),
+          body: JSON.stringify({ pairs: tablePairs }),
         }
       );
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.detail || `Save failed (${res.status})`);
-      }
-      const data = await res.json();
-      if (mountedRef.current) {
-        setSet((prev) =>
-          prev
-            ? {
-                ...prev,
-                pairs,
-                content_hash: data?.content_hash ?? prev.content_hash,
-              }
-            : null
-        );
-        setBaselinePairs(pairs.map((p) => ({ ...p })));
-      }
-      toast.success("Saved", {
-        description: `${pairs.length} pair${pairs.length === 1 ? "" : "s"}.`,
-        id: loadingId,
-      });
+      if (!res.ok) throw new Error("Failed to save table pairs");
+      setBaselineTablePairs(tablePairs.map((p) => ({ ...p })));
+      toast.success("Table pairs saved successfully.");
     } catch (e: any) {
-      toast.error("Save failed", {
-        description: e?.message || "Something went wrong",
-        id: loadingId,
-      });
+      toast.error(e?.message || "Failed to save table pairs");
     } finally {
-      if (mountedRef.current) setSaving(false);
+      setSaving(false);
     }
-  }, [hasDuplicates, duplicateKeys.size, dirty, projectId, setId, pairs]);
-
-  const discard = useCallback(() => {
-    setPairs(baselinePairs.map((p) => ({ ...p })));
-    toast("Reverted to last saved state.");
-  }, [baselinePairs]);
-
-  // ── Filter ───────────────────────────────────────────
-  const filteredIndices = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return pairs
-      .map((p, i) => ({ pair: p, idx: i }))
-      .filter(({ pair }) => {
-        if (!q) return true;
-        return (
-          pair.source_table.toLowerCase().includes(q) ||
-          pair.target_table.toLowerCase().includes(q) ||
-          (pair.rationale || "").toLowerCase().includes(q) ||
-          (pair.matched_concepts || []).some((c) =>
-            c.toLowerCase().includes(q)
-          )
-        );
-      })
-      .map((x) => x.idx);
-  }, [pairs, search]);
-
-  const toggleExpand = (idx: number) => {
-    setExpandedIdx((prev) => {
-      const next = new Set(prev);
-      if (next.has(idx)) next.delete(idx);
-      else next.add(idx);
-      return next;
-    });
   };
 
-  const backHref = `/table-matching?project_id=${encodeURIComponent(
-    projectId
-  )}`;
+  // ── Save Column Reviews for Current Pair ─────────────
+  const saveCurrentPairColumns = async () => {
+    if (!pms || !currentPairBlock) return;
+    const pairId = currentPairBlock.pair_id;
+    const pairEdits = columnEdits[pairId];
+    if (!pairEdits || Object.keys(pairEdits).length === 0) {
+      toast.info("No column modifications to save for this table.");
+      return;
+    }
 
-  // ═══════════════════════════════════════════════════════
-  // Loading / error states
-  // ═══════════════════════════════════════════════════════
+    setSaving(true);
+    const adjustments = Object.entries(pairEdits).map(([ruleId, patch]) => {
+      const orig = currentPairBlock.columns.find((c) => c.rule_id === ruleId);
+      return {
+        target_column: patch.target_column || orig?.target_column || "",
+        matched_source_column: patch.matched_source_column !== undefined ? patch.matched_source_column : orig?.matched_source_column,
+        transformation_rule: patch.transformation_rule || orig?.transformation_rule || "direct_cast",
+        default_value: patch.default_value !== undefined ? patch.default_value : orig?.default_value,
+        confidence_score: patch.confidence_score !== undefined ? patch.confidence_score : orig?.confidence_score,
+      };
+    });
+
+    try {
+      const updated = await pairMappingApi.reviewPair(pms.set_id, pairId, {
+        adjustments,
+        actor: reviewerName,
+        comments: "Reviewed in Unified Mapping Studio",
+      });
+      setPms(updated);
+      setColumnEdits((prev) => {
+        const next = { ...prev };
+        delete next[pairId];
+        return next;
+      });
+      toast.success(`Saved column rules for ${currentPairBlock.target_table}`);
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to save column rules");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ── Trigger AI on Current Table Pair ─────────────────
+  const runAiOnSelectedPair = async () => {
+    if (!pms || !currentPairBlock) return;
+    const pairId = currentPairBlock.pair_id;
+    setRunningAiPairId(pairId);
+    try {
+      const updated = await pairMappingApi.runAiOnPair(pms.set_id, pairId, {
+        use_ai: true,
+      });
+      setPms(updated);
+      toast.success(`AI column mapping completed for ${currentPairBlock.target_table}!`);
+    } catch (e: any) {
+      toast.error(e?.message || "AI column mapping failed");
+    } finally {
+      setRunningAiPairId(null);
+    }
+  };
+
+  // ── Trigger AI on All Table Pairs ────────────────────
+  const runAiOnAllPairs = async () => {
+    if (!pms) return;
+    setRunningAiAll(true);
+    try {
+      const updated = await pairMappingApi.runAiOnAll(pms.set_id, { use_ai: true });
+      setPms(updated);
+      toast.success("AI column mapping completed across all tables!");
+    } catch (e: any) {
+      toast.error(e?.message || "AI batch mapping failed");
+    } finally {
+      setRunningAiAll(false);
+    }
+  };
+
+  // ── Final Human Review Sign-Off Gate ─────────────────
+  const handleFinalizeAndApproveAll = async () => {
+    if (!pms || !tms) return;
+    setFinalizing(true);
+    try {
+      // 1. Save table pairs
+      await fetch(
+        `${API_BASE}/mapping-sets/${encodeURIComponent(projectId)}/table-pairs/${encodeURIComponent(tms.table_mapping_set_id)}`,
+        {
+          method: "PUT",
+          headers: authHeaders(),
+          body: JSON.stringify({
+            pairs: tablePairs.map((p) => ({
+              ...p,
+              match_status: p.match_status === "REJECTED" ? "REJECTED" : "APPROVED",
+            })),
+          }),
+        }
+      );
+
+      // 2. Finalize Pair Mapping Set
+      const finalizedSet = await pairMappingApi.finalize(pms.set_id, {
+        actor: reviewerName,
+        comments: reviewComments || "Approved and signed off via Unified Mapping Studio",
+      });
+
+      setPms(finalizedSet);
+      setFinalized(true);
+      toast.success("Mapping Set Approved & Finalized!", {
+        description: "Ready for live data migration execution.",
+      });
+    } catch (e: any) {
+      toast.error(e?.message || "Finalization failed");
+    } finally {
+      setFinalizing(false);
+    }
+  };
+
+  // ── Filtered Table Pairs List ────────────────────────
+  const filteredTablePairs = useMemo(() => {
+    return tablePairs.filter((p) => {
+      if (tableFilter === "APPROVED" && p.match_status !== "APPROVED") return false;
+      if (tableFilter === "PENDING" && p.match_status === "APPROVED") return false;
+      if (tableSearch.trim()) {
+        const q = tableSearch.toLowerCase().trim();
+        return (
+          p.source_table.toLowerCase().includes(q) ||
+          p.target_table.toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [tablePairs, tableFilter, tableSearch]);
+
   if (loading) {
     return (
-      <div className="min-h-[calc(100vh-4rem)] bg-slate-50 flex items-center justify-center">
-        <LoaderCircle className="w-4 h-4 animate-spin text-slate-400" />
+      <div className="min-h-[calc(100vh-4rem)] bg-slate-950 flex flex-col items-center justify-center gap-3 text-slate-300">
+        <LoaderCircle className="w-10 h-10 animate-spin text-blue-500" />
+        <p className="text-sm font-medium">Assembling Unified Mapping Studio…</p>
       </div>
     );
   }
 
-  if (error && !set) {
+  if (error || !tms) {
     return (
-      <div className="min-h-[calc(100vh-4rem)] bg-slate-50 flex items-center justify-center p-6">
-        <div className="max-w-md w-full bg-white border border-red-200 rounded-xl p-6 space-y-4">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
-            <div className="min-w-0">
-              <h2 className="text-[14px] font-semibold text-red-900">
-                Couldn&apos;t load this pair set
-              </h2>
-              <p className="text-[12px] text-red-800 mt-1 break-all">
-                {error}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void load()}
-              className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-slate-900 text-white text-[12px] font-medium hover:bg-slate-800"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              Retry
-            </button>
-            <Link
-              href={backHref}
-              className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg border border-slate-200 text-slate-700 text-[12px] font-medium hover:bg-slate-50"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              Back
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!set) {
-    return (
-      <div className="min-h-[calc(100vh-4rem)] bg-slate-50 flex items-center justify-center">
-        <p className="text-[12px] text-slate-500">No data</p>
-      </div>
-    );
-  }
-
-  const displayName = set.name || set.table_mapping_set_id;
-
-  // ═══════════════════════════════════════════════════════
-  // Main render
-  // ═══════════════════════════════════════════════════════
-  return (
-    <div className="min-h-[calc(100vh-4rem)] bg-slate-50">
-      <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-6">
-        {/* ── Back ─────────────────────────────────────── */}
-        <Link
-          href={backHref}
-          className="inline-flex items-center gap-1.5 text-[11.5px] text-slate-500 hover:text-slate-900 transition mb-4"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          Back to table matching
-        </Link>
-
-        {/* ── Header ───────────────────────────────────── */}
-        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-5">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 mb-1 flex-wrap">
-              <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                Table matching
-              </span>
-              <span className="text-[10px] text-slate-300">/</span>
-              <span className="text-[10px] font-mono text-slate-400">
-                {set.table_mapping_set_id}
-              </span>
-            </div>
-            <h1 className="text-[22px] sm:text-[24px] font-semibold tracking-[-0.02em] text-slate-900 leading-tight truncate">
-              {displayName}
-            </h1>
-            <div className="flex items-center gap-3 mt-1 text-[11.5px] text-slate-500 font-mono flex-wrap">
-              <span>
-                {set.source_system_id} → {set.target_system_id}
-              </span>
-              <span className="text-slate-300">·</span>
-              <span>v{set.version_tag}</span>
-              <span className="text-slate-300">·</span>
-              <span>
-                {pairs.length} pair{pairs.length === 1 ? "" : "s"}
-              </span>
-              {dirty && (
-                <>
-                  <span className="text-slate-300">·</span>
-                  <span className="text-amber-700 font-medium">
-                    Unsaved changes
-                  </span>
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={() => void load()}
-              disabled={saving}
-              className="inline-flex items-center justify-center h-9 w-9 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition"
-              title="Reload"
-              aria-label="Reload"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-            </button>
-
-            {dirty && (
-              <button
-                type="button"
-                onClick={discard}
-                disabled={saving}
-                className="h-9 px-3 rounded-lg border border-slate-200 bg-white text-[12px] font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition"
-              >
-                Discard
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={() => void save()}
-              disabled={!dirty || saving || hasDuplicates}
-              className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg bg-slate-900 text-white text-[12px] font-medium hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition"
-            >
-              {saving ? (
-                <>
-                  <LoaderCircle className="w-3.5 h-3.5 animate-spin" />
-                  Saving…
-                </>
-              ) : (
-                <>
-                  <Save className="w-3.5 h-3.5" />
-                  Save
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-
-        {/* ── Warnings ─────────────────────────────────── */}
-        {hasDuplicates && (
-          <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-[12px] text-amber-900">
-            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-            <span className="leading-relaxed">
-              <strong>{duplicateKeys.size}</strong> duplicate pair
-              {duplicateKeys.size === 1 ? "" : "s"} detected. Remove duplicates
-              before saving.
-            </span>
-          </div>
-        )}
-
-        {/* ── Toolbar ──────────────────────────────────── */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mb-4">
-          <div className="relative flex-1 min-w-0">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by table, concept, or rationale…"
-              className="w-full h-9 pl-8 pr-8 rounded-lg border border-slate-200 bg-white text-[12px] text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-900 transition"
-            />
-            {search && (
-              <button
-                type="button"
-                onClick={() => setSearch("")}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
-                aria-label="Clear search"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            )}
-          </div>
+      <div className="min-h-[calc(100vh-4rem)] bg-slate-950 p-8 flex items-center justify-center">
+        <div className="max-w-md w-full bg-slate-900 border border-red-500/30 rounded-xl p-6 text-center space-y-4">
+          <AlertTriangle className="w-12 h-12 text-red-400 mx-auto" />
+          <h2 className="text-lg font-semibold text-white">Mapping Studio Error</h2>
+          <p className="text-sm text-slate-400">{error || "Mapping set not found."}</p>
           <button
-            type="button"
-            onClick={() => setAddPairOpen(true)}
-            className="inline-flex items-center justify-center gap-1.5 h-9 px-3.5 rounded-lg border border-slate-200 bg-white text-[12px] font-medium text-slate-700 hover:bg-slate-50 transition shrink-0"
+            onClick={() => void loadData()}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition"
           >
-            <Plus className="w-3.5 h-3.5" />
-            Add pair
+            <RefreshCw className="w-4 h-4" /> Retry
           </button>
         </div>
+      </div>
+    );
+  }
 
-        {/* ── Pair list ────────────────────────────────── */}
-        <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-          <div className="hidden md:grid grid-cols-[1fr_1fr_180px_90px] gap-3 px-5 py-2.5 border-b border-slate-200 bg-slate-50 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-            <span>Source table</span>
-            <span>Target table</span>
-            <span className="text-center">Confidence</span>
-            <span className="text-right">Actions</span>
+  return (
+    <div className="min-h-[calc(100vh-4rem)] bg-slate-950 text-slate-100 flex flex-col">
+      {/* ─────────────────────────────────────────────────────────────
+          1. Studio Header & Live Pipeline Progress
+      ───────────────────────────────────────────────────────────── */}
+      <header className="border-b border-slate-800 bg-slate-900/90 backdrop-blur px-6 py-4 sticky top-0 z-30">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          {/* Title & Context */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => router.push(`/projects`)}
+              className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800 transition"
+              title="Back to Projects"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg font-bold text-white tracking-tight">
+                  {tms.name || `${tms.source_system_id} → ${tms.target_system_id}`}
+                </h1>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-mono">
+                  v{tms.version_tag}
+                </span>
+                {finalized ? (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" /> Signed Off & Approved
+                  </span>
+                ) : (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-medium">
+                    Human Review Gate Active
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-400">
+                Unified Data Mapping Studio • Table Alignment & Column Transformations in One Workspace
+              </p>
+            </div>
           </div>
 
-          {pairs.length === 0 ? (
-            <div className="px-6 py-16 text-center">
-              <div className="w-11 h-11 rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-center mx-auto mb-3">
-                <Table2 className="w-5 h-5 text-slate-400" />
+          {/* Metrics & Actions */}
+          <div className="flex items-center gap-4 flex-wrap">
+            {/* Stat Badges */}
+            <div className="hidden lg:flex items-center gap-3 border-r border-slate-800 pr-4">
+              <div className="text-right">
+                <div className="text-xs text-slate-400">Table Alignment</div>
+                <div className="text-sm font-semibold text-white">
+                  {stats.approvedTables} / {stats.totalTables} Approved
+                </div>
               </div>
-              <h3 className="text-[14px] font-semibold text-slate-900">
-                No pairs in this set
-              </h3>
-              <p className="text-[12px] text-slate-500 mt-1 max-w-sm mx-auto">
-                Add pairs manually to start column-level matching.
-              </p>
-              <button
-                type="button"
-                onClick={() => setAddPairOpen(true)}
-                className="mt-4 inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg bg-slate-900 text-white text-[12px] font-medium hover:bg-slate-800"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Add first pair
-              </button>
+              <div className="text-right">
+                <div className="text-xs text-slate-400">Columns Mapped</div>
+                <div className="text-sm font-semibold text-emerald-400">
+                  {stats.mappedCols} / {stats.totalCols} ({stats.colPct}%)
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-xs text-slate-400">Avg Confidence</div>
+                <div className="text-sm font-semibold text-blue-400 font-mono">
+                  {stats.avgConfidence}%
+                </div>
+              </div>
             </div>
-          ) : filteredIndices.length === 0 ? (
-            <div className="px-6 py-12 text-center text-[12px] text-slate-500">
-              No pairs match &ldquo;{search}&rdquo;.{" "}
+
+            {/* AI Batch Button */}
+            <button
+              onClick={runAiOnAllPairs}
+              disabled={runningAiAll || finalized}
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold transition disabled:opacity-50"
+            >
+              {runningAiAll ? (
+                <LoaderCircle className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+              ) : (
+                <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+              )}
+              {runningAiAll ? "Analyzing All Tables…" : "Run AI on All Columns"}
+            </button>
+
+            {/* Save Button */}
+            <button
+              onClick={() => void saveTablePairs()}
+              disabled={saving}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition"
+            >
+              <Save className="w-3.5 h-3.5" />
+              Save Progress
+            </button>
+
+            {/* Migration Direct Link */}
+            {pms && (
               <button
-                type="button"
-                onClick={() => setSearch("")}
-                className="text-slate-900 underline underline-offset-2 font-medium"
+                onClick={() =>
+                  router.push(`/migrations/new?project_id=${projectId}&pair_mapping_set_id=${pms.set_id}`)
+                }
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-lg shadow-emerald-600/20 transition"
               >
-                Clear search
+                <Play className="w-3.5 h-3.5 fill-current" />
+                Start Migration
               </button>
+            )}
+          </div>
+        </div>
+
+        {/* Studio View Navigation Tabs */}
+        <div className="flex items-center justify-between border-t border-slate-800/80 mt-4 pt-3">
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setActiveTab("studio")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1.5 ${
+                activeTab === "studio"
+                  ? "bg-blue-600 text-white"
+                  : "text-slate-400 hover:text-white hover:bg-slate-800"
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" /> Unified Studio (Tables & Columns)
+            </button>
+            <button
+              onClick={() => setActiveTab("table_matrix")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1.5 ${
+                activeTab === "table_matrix"
+                  ? "bg-blue-600 text-white"
+                  : "text-slate-400 hover:text-white hover:bg-slate-800"
+              }`}
+            >
+              <Table2 className="w-3.5 h-3.5" /> Table Pairing Matrix
+            </button>
+            <button
+              onClick={() => setActiveTab("signoff")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1.5 ${
+                activeTab === "signoff"
+                  ? "bg-blue-600 text-white"
+                  : "text-slate-400 hover:text-white hover:bg-slate-800"
+              }`}
+            >
+              <FileCheck2 className="w-3.5 h-3.5" /> Human Review & Sign-Off Gate
+            </button>
+          </div>
+
+          <span className="text-xs text-slate-500 hidden sm:inline">
+            Project: <code className="text-slate-400 font-mono">{projectId}</code>
+          </span>
+        </div>
+      </header>
+
+      {/* ─────────────────────────────────────────────────────────────
+          2. Main Workspace Panes
+      ───────────────────────────────────────────────────────────── */}
+      {activeTab === "studio" && (
+        <main className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+          {/* ── Left Pane: Table Pairs Master List ────────────────── */}
+          <aside className="w-full lg:w-96 border-r border-slate-800 bg-slate-900/40 flex flex-col overflow-hidden">
+            {/* Table Search & Filter Bar */}
+            <div className="p-3 border-b border-slate-800 space-y-2">
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-500 absolute left-2.5 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Filter table pairs…"
+                  value={tableSearch}
+                  onChange={(e) => setTableSearch(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="flex items-center gap-1 text-xs">
+                <button
+                  onClick={() => setTableFilter("ALL")}
+                  className={`px-2 py-1 rounded ${
+                    tableFilter === "ALL" ? "bg-slate-800 text-white font-medium" : "text-slate-400 hover:text-slate-300"
+                  }`}
+                >
+                  All ({tablePairs.length})
+                </button>
+                <button
+                  onClick={() => setTableFilter("APPROVED")}
+                  className={`px-2 py-1 rounded ${
+                    tableFilter === "APPROVED" ? "bg-slate-800 text-emerald-400 font-medium" : "text-slate-400 hover:text-slate-300"
+                  }`}
+                >
+                  Approved ({tablePairs.filter((p) => p.match_status === "APPROVED").length})
+                </button>
+                <button
+                  onClick={() => setTableFilter("PENDING")}
+                  className={`px-2 py-1 rounded ${
+                    tableFilter === "PENDING" ? "bg-slate-800 text-amber-400 font-medium" : "text-slate-400 hover:text-slate-300"
+                  }`}
+                >
+                  Needs Review ({tablePairs.filter((p) => p.match_status !== "APPROVED").length})
+                </button>
+              </div>
             </div>
-          ) : (
-            <div className="divide-y divide-slate-100">
-              {filteredIndices.map((idx) => {
-                const pair = pairs[idx];
-                const isExpanded = expandedIdx.has(idx);
-                const dupKey = `${pair.source_table}::${pair.target_table}`;
-                const isDuplicate = duplicateKeys.has(dupKey);
-                const pct = Math.round(pair.confidence_score * 100);
+
+            {/* Table List Cards */}
+            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              {filteredTablePairs.map((pair, idx) => {
+                const isSelected = selectedPairIndex === idx;
+                const isApproved = pair.match_status === "APPROVED";
+                const isRejected = pair.match_status === "REJECTED";
+
+                // Check corresponding pair block for column count
+                const block = pms?.pairs.find(
+                  (b) =>
+                    b.source_table.toLowerCase() === pair.source_table.toLowerCase() &&
+                    b.target_table.toLowerCase() === pair.target_table.toLowerCase()
+                );
+                const colCount = block ? block.columns.length : pair.matched_columns_count || 0;
+                const mappedCount = block
+                  ? block.columns.filter((c) => !!c.matched_source_column).length
+                  : pair.matched_columns_count || 0;
 
                 return (
-                  <PairRow
-                    key={`${dupKey}-${idx}`}
-                    pair={pair}
-                    pct={pct}
-                    isExpanded={isExpanded}
-                    isDuplicate={isDuplicate}
-                    onToggleExpand={() => toggleExpand(idx)}
-                    onChange={(patch) => updatePair(idx, patch)}
-                    onRemove={() => removePair(idx)}
-                  />
+                  <div
+                    key={`${pair.source_table}-${pair.target_table}`}
+                    onClick={() => setSelectedPairIndex(idx)}
+                    className={`p-3 rounded-xl border text-left cursor-pointer transition relative group ${
+                      isSelected
+                        ? "bg-blue-950/30 border-blue-500 shadow-md shadow-blue-500/10"
+                        : "bg-slate-900/60 border-slate-800 hover:border-slate-700 hover:bg-slate-900"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="space-y-1 min-w-0">
+                        <div className="flex items-center gap-1.5 text-xs font-semibold text-white truncate">
+                          <span className="truncate">{pair.source_table}</span>
+                          <ArrowRight className="w-3 h-3 text-slate-500 shrink-0" />
+                          <span className="text-blue-400 truncate">{pair.target_table}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                          <span className="font-mono text-emerald-400 font-medium">
+                            {(pair.confidence_score * 100).toFixed(0)}% Match
+                          </span>
+                          <span>•</span>
+                          <span>{mappedCount}/{colCount} cols</span>
+                        </div>
+                      </div>
+
+                      {/* Approval Status Toggle */}
+                      <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => handleToggleTableApproval(idx)}
+                          className={`p-1 rounded-md border text-xs transition ${
+                            isApproved
+                              ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                              : "text-slate-500 border-slate-800 hover:bg-slate-800 hover:text-slate-300"
+                          }`}
+                          title={isApproved ? "Approved (Click to Unapprove)" : "Click to Approve Table Pair"}
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 );
               })}
             </div>
-          )}
+          </aside>
 
-          {pairs.length > 0 && (
-            <div className="flex items-center justify-between gap-2 px-5 py-2.5 border-t border-slate-200 bg-slate-50/60 text-[11px] text-slate-500">
-              <span>
-                <span className="font-mono font-semibold text-slate-800">
-                  {filteredIndices.length}
-                </span>{" "}
-                of {pairs.length} shown
-              </span>
-              {dirty && (
-                <span className="text-amber-700 font-medium">
-                  Unsaved changes
-                </span>
-              )}
-            </div>
-          )}
-        </div>
+          {/* ── Right Pane: Column Mapping Workbench ─────────────── */}
+          <section className="flex-1 flex flex-col bg-slate-950 overflow-hidden">
+            {selectedPair ? (
+              <>
+                {/* Selected Table Pair Banner */}
+                <div className="p-5 border-b border-slate-800 bg-slate-900/50 space-y-3">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-slate-400 font-mono">
+                          {selectedPair.source_table}
+                        </span>
+                        <ArrowRight className="w-4 h-4 text-blue-500" />
+                        <span className="text-base font-bold text-white font-mono">
+                          {selectedPair.target_table}
+                        </span>
+                        {selectedPair.match_status === "APPROVED" ? (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                            Table Approved
+                          </span>
+                        ) : (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                            Awaiting Table Approval
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-400 mt-1 max-w-2xl">
+                        {selectedPair.rationale || "Matched by LLM based on entity semantics and column overlap."}
+                      </p>
+                    </div>
 
-        <p className="mt-4 text-[11px] text-slate-400 text-center">
-          Rationale is AI-generated or reviewer-authored at approval time.
-        </p>
-      </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={runAiOnSelectedPair}
+                        disabled={runningAiPairId === currentPairBlock?.pair_id || finalized}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 text-xs font-semibold transition disabled:opacity-50"
+                      >
+                        {runningAiPairId === currentPairBlock?.pair_id ? (
+                          <LoaderCircle className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Sparkles className="w-3.5 h-3.5 text-blue-400" />
+                        )}
+                        Run AI on Table
+                      </button>
 
-      {/* Add pair modal */}
-      {addPairOpen && (
-        <AddPairModal
-          existing={pairs}
-          onClose={() => setAddPairOpen(false)}
-          onAdd={(s, t) => {
-            const ok = addPair(s, t);
-            if (ok) setAddPairOpen(false);
-            return ok;
-          }}
-        />
-      )}
-    </div>
-  );
-}
+                      <button
+                        onClick={saveCurrentPairColumns}
+                        disabled={saving}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-medium border border-slate-700 transition"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        Save Column Changes
+                      </button>
+                    </div>
+                  </div>
 
-// ═════════════════════════════════════════════════════════════
-// PairRow — one pair (collapsed + expanded)
-// ═════════════════════════════════════════════════════════════
-function PairRow({
-  pair,
-  pct,
-  isExpanded,
-  isDuplicate,
-  onToggleExpand,
-  onChange,
-  onRemove,
-}: {
-  pair: TablePair;
-  pct: number;
-  isExpanded: boolean;
-  isDuplicate: boolean;
-  onToggleExpand: () => void;
-  onChange: (patch: Partial<TablePair>) => void;
-  onRemove: () => void;
-}) {
-  const barColor =
-    pct >= 85 ? "bg-slate-900" : pct >= 50 ? "bg-slate-600" : "bg-slate-300";
+                  {/* Filter & Search Bar */}
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+                    <div className="relative w-full sm:w-64">
+                      <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
+                      <input
+                        type="text"
+                        placeholder="Search columns or transforms…"
+                        value={columnSearch}
+                        onChange={(e) => setColumnSearch(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
 
-  const statusLabel = pair.match_status.toLowerCase().replace(/_/g, " ");
+                    <div className="flex items-center gap-1 w-full sm:w-auto text-xs">
+                      <button
+                        onClick={() => setColumnStatusFilter("ALL")}
+                        className={`px-2.5 py-1 rounded-lg ${
+                          columnStatusFilter === "ALL"
+                            ? "bg-slate-800 text-white font-medium"
+                            : "text-slate-400 hover:text-slate-300"
+                        }`}
+                      >
+                        All ({currentPairBlock?.columns.length || 0})
+                      </button>
+                      <button
+                        onClick={() => setColumnStatusFilter("MATCHED")}
+                        className={`px-2.5 py-1 rounded-lg ${
+                          columnStatusFilter === "MATCHED"
+                            ? "bg-slate-800 text-emerald-400 font-medium"
+                            : "text-slate-400 hover:text-slate-300"
+                        }`}
+                      >
+                        Matched ({currentPairBlock?.columns.filter((c) => !!c.matched_source_column).length || 0})
+                      </button>
+                      <button
+                        onClick={() => setColumnStatusFilter("UNMATCHED")}
+                        className={`px-2.5 py-1 rounded-lg ${
+                          columnStatusFilter === "UNMATCHED"
+                            ? "bg-slate-800 text-amber-400 font-medium"
+                            : "text-slate-400 hover:text-slate-300"
+                        }`}
+                      >
+                        Unmatched ({currentPairBlock?.columns.filter((c) => !c.matched_source_column).length || 0})
+                      </button>
+                      <button
+                        onClick={() => setColumnStatusFilter("MANUAL")}
+                        className={`px-2.5 py-1 rounded-lg ${
+                          columnStatusFilter === "MANUAL"
+                            ? "bg-slate-800 text-blue-400 font-medium"
+                            : "text-slate-400 hover:text-slate-300"
+                        }`}
+                      >
+                        Manual Overrides ({currentPairBlock?.columns.filter((c) => c.status === "MANUAL_OVERRIDE").length || 0})
+                      </button>
+                    </div>
+                  </div>
+                </div>
 
-  return (
-    <div className={isDuplicate ? "bg-red-50/40" : ""}>
-      {/* ── Collapsed row ──────────────────────────────── */}
-      <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_180px_90px] gap-2 md:gap-3 items-start px-4 sm:px-5 py-3">
-        {/* Source */}
-        <div className="min-w-0">
-          <span className="font-mono text-[12px] font-semibold text-slate-900 block truncate">
-            {pair.source_table}
-          </span>
-          {pair.matched_concepts.length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-1">
-              {pair.matched_concepts.slice(0, 3).map((c) => (
-                <span
-                  key={c}
-                  className="text-[9.5px] font-mono px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-600"
-                >
-                  {c}
-                </span>
-              ))}
-              {pair.matched_concepts.length > 3 && (
-                <span className="text-[9.5px] text-slate-400 self-center">
-                  +{pair.matched_concepts.length - 3}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
+                {/* Column Mapping Grid */}
+                <div className="flex-1 overflow-y-auto p-5">
+                  <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-900/40">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-800 bg-slate-900/80 text-slate-400 font-medium">
+                          <th className="py-2.5 px-4">Source Column ({selectedPair.source_table})</th>
+                          <th className="py-2.5 px-4 w-44">Transformation Rule</th>
+                          <th className="py-2.5 px-4">Target Column ({selectedPair.target_table})</th>
+                          <th className="py-2.5 px-4 w-28">Confidence</th>
+                          <th className="py-2.5 px-4 w-28">Status</th>
+                          <th className="py-2.5 px-4 w-32">Default Value</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {visibleColumnRules.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="py-8 text-center text-slate-500">
+                              No columns matched the active filter.
+                            </td>
+                          </tr>
+                        ) : (
+                          visibleColumnRules.map((col) => {
+                            const isMatched = !!col.matched_source_column;
+                            const isManual = col.status === "MANUAL_OVERRIDE";
 
-        {/* Target */}
-        <div className="min-w-0">
-          <span className="font-mono text-[12px] font-semibold text-slate-900 block truncate">
-            {pair.target_table}
-          </span>
-          {isDuplicate && (
-            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-red-700 mt-1">
-              <AlertTriangle className="w-3 h-3" />
-              Duplicate
-            </span>
-          )}
-        </div>
+                            return (
+                              <tr key={col.rule_id} className="hover:bg-slate-800/40 transition">
+                                {/* Source Column Picker */}
+                                <td className="py-2 px-4">
+                                  <ColumnPicker
+                                    value={col.matched_source_column}
+                                    options={sourceColumnOptions}
+                                    onChange={(val) =>
+                                      handleEditColumn(col.rule_id, {
+                                        matched_source_column: val,
+                                        transformation_rule: val ? col.transformation_rule || "direct_cast" : null,
+                                      })
+                                    }
+                                    placeholder="Unmapped"
+                                    readOnly={finalized}
+                                  />
+                                </td>
 
-        {/* Confidence */}
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <div className="flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
-              <div
-                className={`h-full rounded-full ${barColor}`}
-                style={{ width: `${pct}%` }}
-              />
-            </div>
-            <span className="font-mono text-[10.5px] font-semibold text-slate-700 tabular-nums shrink-0">
-              {pct}%
-            </span>
-          </div>
-          <span className="text-[9.5px] text-slate-400 block capitalize">
-            {statusLabel}
-          </span>
-        </div>
+                                {/* Transformation Picker */}
+                                <td className="py-2 px-4">
+                                  <TransformPicker
+                                    value={col.transformation_rule || "direct_cast"}
+                                    onChange={(val) =>
+                                      handleEditColumn(col.rule_id, { transformation_rule: val })
+                                    }
+                                    disabled={!col.matched_source_column || finalized}
+                                    readOnly={finalized}
+                                  />
+                                </td>
 
-        {/* Actions */}
-        <div className="flex items-center justify-end gap-0.5">
-          <button
-            type="button"
-            onClick={onToggleExpand}
-            className="p-1.5 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition"
-            title={isExpanded ? "Collapse" : "Expand"}
-            aria-expanded={isExpanded}
-          >
-            {isExpanded ? (
-              <ChevronUp className="w-3.5 h-3.5" />
+                                {/* Target Column */}
+                                <td className="py-2 px-4">
+                                  <div className="flex items-center gap-1.5 font-mono text-white font-medium">
+                                    <span>{col.target_column}</span>
+                                    {!col.target_nullable && (
+                                      <span className="text-[10px] text-amber-400 font-bold" title="Required (NOT NULL)">
+                                        *
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[10px] text-slate-500 font-mono">
+                                    {col.target_datatype}
+                                  </div>
+                                </td>
+
+                                {/* Confidence */}
+                                <td className="py-2 px-4">
+                                  {isMatched ? (
+                                    <div className="flex items-center gap-1.5">
+                                      <div className="w-12 bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                                        <div
+                                          className="bg-emerald-500 h-full rounded-full"
+                                          style={{ width: `${Math.min(100, Math.round(col.confidence_score * 100))}%` }}
+                                        />
+                                      </div>
+                                      <span className="font-mono text-slate-400 text-[11px]">
+                                        {(col.confidence_score * 100).toFixed(0)}%
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <span className="text-slate-600 font-mono">—</span>
+                                  )}
+                                </td>
+
+                                {/* Status */}
+                                <td className="py-2 px-4">
+                                  {isManual ? (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 font-medium">
+                                      Manual
+                                    </span>
+                                  ) : isMatched ? (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium">
+                                      Matched
+                                    </span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] bg-slate-800 text-slate-400 border border-slate-700">
+                                      Unmapped
+                                    </span>
+                                  )}
+                                </td>
+
+                                {/* Default Value */}
+                                <td className="py-2 px-4">
+                                  <input
+                                    type="text"
+                                    value={col.default_value || ""}
+                                    placeholder="None"
+                                    disabled={finalized}
+                                    onChange={(e) =>
+                                      handleEditColumn(col.rule_id, { default_value: e.target.value })
+                                    }
+                                    className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-slate-300 placeholder-slate-600 focus:outline-none focus:border-blue-500 font-mono text-[11px]"
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
             ) : (
-              <ChevronDown className="w-3.5 h-3.5" />
+              <div className="flex-1 flex items-center justify-center text-slate-500">
+                Select a table pair from the left panel to review and map columns.
+              </div>
             )}
-          </button>
-          <button
-            type="button"
-            onClick={onRemove}
-            className="p-1.5 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition"
-            title="Remove pair"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </div>
-
-      {/* ── Rationale preview (always visible, read-only) ── */}
-      {pair.rationale && !isExpanded && (
-        <div className="px-4 sm:px-5 pb-3">
-          <p className="text-[11.5px] text-slate-600 leading-relaxed line-clamp-2">
-            {pair.rationale}
-          </p>
-        </div>
+          </section>
+        </main>
       )}
 
-      {/* ── Expanded ───────────────────────────────────── */}
-      {isExpanded && (
-        <div className="border-t border-slate-100 bg-slate-50/60 px-4 sm:px-5 py-4 space-y-4">
-          {/* Rationale (full, read-only) */}
-          <div>
-            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-1.5">
-              Rationale
-            </label>
-            <p className="text-[12px] text-slate-700 leading-[1.65] whitespace-pre-wrap">
-              {pair.rationale || (
-                <span className="italic text-slate-400">
-                  No rationale yet.
-                </span>
-              )}
-            </p>
-            <p className="text-[10px] text-slate-400 mt-1.5 italic">
-              Read-only. This is AI-generated or reviewer-authored at approval.
-            </p>
-          </div>
-
-          {/* Confidence slider */}
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                Adjust confidence
-              </label>
-              <span className="text-[11px] font-mono font-semibold text-slate-900 tabular-nums">
-                {pct}%
-              </span>
-            </div>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              value={pct}
-              onChange={(e) =>
-                onChange({
-                  confidence_score: Number(e.target.value) / 100,
-                  match_status: "MANUAL_OVERRIDE",
-                })
-              }
-              className="w-full accent-slate-900"
-            />
-          </div>
-
-          {/* Requires masking */}
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5">
-            <div className="min-w-0">
-              <p className="text-[12px] font-medium text-slate-900">
-                Requires masking
-              </p>
-              <p className="text-[10.5px] text-slate-500 mt-0.5">
-                PII / regulated data
+      {/* ─────────────────────────────────────────────────────────────
+          3. Table Matrix Tab (High-level Topology & Dependencies)
+      ───────────────────────────────────────────────────────────── */}
+      {activeTab === "table_matrix" && (
+        <main className="flex-1 p-6 max-w-6xl mx-auto w-full space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-base font-bold text-white">Table Alignment & Migration Order Matrix</h2>
+              <p className="text-xs text-slate-400">
+                Review topological dependencies, masking policies, and business justifications across all tables.
               </p>
             </div>
             <button
-              type="button"
-              role="switch"
-              aria-checked={pair.requires_masking}
-              onClick={() =>
-                onChange({ requires_masking: !pair.requires_masking })
-              }
-              className={`relative inline-flex h-[20px] w-9 shrink-0 items-center rounded-full border transition-colors ${
-                pair.requires_masking
-                  ? "border-slate-900 bg-slate-900"
-                  : "border-slate-300 bg-slate-200"
-              }`}
+              onClick={() => void saveTablePairs()}
+              disabled={saving}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition"
             >
-              <span
-                className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${
-                  pair.requires_masking
-                    ? "translate-x-[17px]"
-                    : "translate-x-[2px]"
-                }`}
-              />
+              <Save className="w-3.5 h-3.5" /> Save Table Alignments
             </button>
           </div>
 
-          {/* Depends on */}
-          {pair.depends_on.length > 0 && (
-            <div>
-              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-1.5">
-                Depends on (FK parents)
-              </label>
-              <div className="flex flex-wrap gap-1">
-                {pair.depends_on.map((d) => (
-                  <span
-                    key={d}
-                    className="text-[10.5px] font-mono px-1.5 py-0.5 rounded bg-white border border-slate-200 text-slate-700"
-                  >
-                    {d}
-                  </span>
+          <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-900/50">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-slate-800 bg-slate-900 text-slate-400 font-medium">
+                  <th className="py-3 px-4">Source Table</th>
+                  <th className="py-3 px-4">Target Table</th>
+                  <th className="py-3 px-4">Confidence</th>
+                  <th className="py-3 px-4">Depends On (Wave Order)</th>
+                  <th className="py-3 px-4">Masking Required</th>
+                  <th className="py-3 px-4">Human Review Decision</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/60">
+                {tablePairs.map((pair, idx) => (
+                  <tr key={idx} className="hover:bg-slate-800/30">
+                    <td className="py-3 px-4 font-mono font-medium text-white">{pair.source_table}</td>
+                    <td className="py-3 px-4 font-mono font-medium text-blue-400">{pair.target_table}</td>
+                    <td className="py-3 px-4">
+                      <span className="font-mono text-emerald-400 font-semibold">
+                        {(pair.confidence_score * 100).toFixed(0)}%
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-slate-400">
+                      {pair.depends_on && pair.depends_on.length > 0 ? (
+                        <span className="font-mono text-[11px] bg-slate-800 px-2 py-0.5 rounded text-amber-300">
+                          {pair.depends_on.join(", ")}
+                        </span>
+                      ) : (
+                        <span className="text-slate-600">Wave 1 (Independent)</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4">
+                      {pair.requires_masking ? (
+                        <span className="px-2 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20 font-medium">
+                          PII Masking
+                        </span>
+                      ) : (
+                        <span className="text-slate-600">No</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleToggleTableApproval(idx)}
+                          className={`px-2.5 py-1 rounded text-xs font-medium border transition ${
+                            pair.match_status === "APPROVED"
+                              ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                              : "bg-slate-800 text-slate-400 border-slate-700 hover:text-white"
+                          }`}
+                        >
+                          {pair.match_status === "APPROVED" ? "Approved" : "Approve"}
+                        </button>
+                        <button
+                          onClick={() => handleRejectTable(idx)}
+                          className={`px-2 py-1 rounded text-xs border transition ${
+                            pair.match_status === "REJECTED"
+                              ? "bg-red-500/20 text-red-400 border-red-500/30"
+                              : "text-slate-500 border-slate-800 hover:text-red-400"
+                          }`}
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
                 ))}
-              </div>
-            </div>
-          )}
-
-          {/* Matched columns */}
-          {pair.matched_columns.length > 0 && (
-            <div>
-              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-1.5">
-                Matched columns ({pair.matched_columns_count})
-              </label>
-              <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
-                <table className="w-full text-[11px]">
-                  <thead className="bg-slate-50 text-[9.5px] font-bold uppercase tracking-wider text-slate-500">
-                    <tr className="border-b border-slate-200">
-                      <th className="text-left px-3 py-1.5">Source</th>
-                      <th className="text-left px-3 py-1.5">Target</th>
-                      <th className="text-left px-3 py-1.5">Concept</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {pair.matched_columns.map((c, i) => (
-                      <tr key={i} className="hover:bg-slate-50/60">
-                        <td className="px-3 py-1.5 font-mono text-[11px] text-slate-900">
-                          {c.source_col}
-                        </td>
-                        <td className="px-3 py-1.5 font-mono text-[11px] text-slate-900">
-                          {c.target_col}
-                        </td>
-                        <td className="px-3 py-1.5 text-[11px] text-slate-600">
-                          {c.concept || (
-                            <span className="italic text-slate-400">—</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
+              </tbody>
+            </table>
+          </div>
+        </main>
       )}
-    </div>
-  );
-}
 
-// ═════════════════════════════════════════════════════════════
-// AddPairModal — simple inline modal, no shadcn Dialog needed
-// ═════════════════════════════════════════════════════════════
-function AddPairModal({
-  existing,
-  onClose,
-  onAdd,
-}: {
-  existing: TablePair[];
-  onClose: () => void;
-  onAdd: (sourceTable: string, targetTable: string) => boolean;}) {
-  const [source, setSource] = useState("");
-  const [target, setTarget] = useState("");
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.body.style.overflow = prev;
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [onClose]);
-
-  const handleAdd = () => {
-    const s = source.trim();
-    const t = target.trim();
-    if (!s || !t) {
-      setErr("Both source and target table names are required.");
-      return;
-    }
-    const duplicate = existing.some(
-      (p) => p.source_table === s && p.target_table === t
-    );
-    if (duplicate) {
-      setErr("This pair already exists in the set.");
-      return;
-    }
-    const ok = onAdd(s, t);
-    if (!ok) {
-      setErr("Failed to add pair.");
-      return;
-    }
-    onClose();
-  };
-
-  return (
-    <div
-      className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="add-pair-title"
-    >
-      <div className="bg-white rounded-xl w-full max-w-md border border-slate-200 shadow-2xl overflow-hidden">
-        {/* Header */}
-        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-8 h-8 rounded-lg bg-slate-900 flex items-center justify-center shrink-0">
-              <Plus className="w-4 h-4 text-white" strokeWidth={2.25} />
-            </div>
-            <div className="min-w-0">
-              <h3
-                id="add-pair-title"
-                className="text-[13.5px] font-semibold text-slate-900"
-              >
-                Add table pair
-              </h3>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                Enter both table names manually.
+      {/* ─────────────────────────────────────────────────────────────
+          4. Human Sign-Off Gate Tab
+      ───────────────────────────────────────────────────────────── */}
+      {activeTab === "signoff" && (
+        <main className="flex-1 p-6 max-w-4xl mx-auto w-full space-y-6">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6">
+            <div>
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <Shield className="w-5 h-5 text-blue-500" /> Human Review & Formal Sign-Off Gate
+              </h2>
+              <p className="text-xs text-slate-400 mt-1">
+                Before data migration executes against production systems, an engineer must review and approve the mapping catalog.
               </p>
             </div>
+
+            {/* Checklist */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="p-4 rounded-xl border border-slate-800 bg-slate-950 space-y-1">
+                <div className="text-xs text-slate-400">Table Alignment</div>
+                <div className="text-lg font-bold text-white">
+                  {stats.approvedTables} / {stats.totalTables}
+                </div>
+                <div className="text-[11px] text-emerald-400 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3" /> Ready for approval
+                </div>
+              </div>
+
+              <div className="p-4 rounded-xl border border-slate-800 bg-slate-950 space-y-1">
+                <div className="text-xs text-slate-400">Column Coverage</div>
+                <div className="text-lg font-bold text-white">
+                  {stats.mappedCols} / {stats.totalCols}
+                </div>
+                <div className="text-[11px] text-blue-400">
+                  {stats.colPct}% total columns mapped
+                </div>
+              </div>
+
+              <div className="p-4 rounded-xl border border-slate-800 bg-slate-950 space-y-1">
+                <div className="text-xs text-slate-400">Sign-Off Status</div>
+                <div className="text-lg font-bold text-white">
+                  {finalized ? "Signed Off" : "Pending Signature"}
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  {finalized ? "Locked for execution" : "Review in progress"}
+                </div>
+              </div>
+            </div>
+
+            {/* Sign-Off Form */}
+            <div className="space-y-4 pt-4 border-t border-slate-800">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Reviewer Name / Identity
+                </label>
+                <input
+                  type="text"
+                  value={reviewerName}
+                  onChange={(e) => setReviewerName(e.target.value)}
+                  disabled={finalized}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Sign-Off Notes & Regulatory Justification (Optional)
+                </label>
+                <textarea
+                  rows={3}
+                  value={reviewComments}
+                  onChange={(e) => setReviewComments(e.target.value)}
+                  disabled={finalized}
+                  placeholder="e.g. Reviewed column transforms against enterprise data dictionary. Masking verified for customer PII."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs text-white focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-between pt-2">
+                <p className="text-[11px] text-slate-500">
+                  Approving persists a cryptographically signed content hash for compliance audits.
+                </p>
+
+                <button
+                  onClick={handleFinalizeAndApproveAll}
+                  disabled={finalizing || finalized}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-lg shadow-blue-600/20 transition disabled:opacity-50"
+                >
+                  {finalizing ? (
+                    <LoaderCircle className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="w-4 h-4" />
+                  )}
+                  {finalized ? "Signed Off & Approved" : "Approve & Finalize Mapping Set"}
+                </button>
+              </div>
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1.5 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition shrink-0"
-            aria-label="Close"
-          >
-            <X className="w-4 h-4" />
-          </button>
+        </main>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────
+          5. Sticky Review & Execution Bar
+      ───────────────────────────────────────────────────────────── */}
+      <footer className="border-t border-slate-800 bg-slate-900/90 backdrop-blur px-6 py-3 flex items-center justify-between z-20">
+        <div className="flex items-center gap-4 text-xs text-slate-400">
+          <span>
+            Active Pair: <strong className="text-white">{selectedPair?.source_table || "None"}</strong> → <strong className="text-blue-400">{selectedPair?.target_table || "None"}</strong>
+          </span>
+          <span className="hidden sm:inline">•</span>
+          <span className="hidden sm:inline">
+            Status: <span className="text-emerald-400 font-medium">{stats.approvedTables}/{stats.totalTables} Tables Approved</span>
+          </span>
         </div>
 
-        {/* Body */}
-        <div className="p-5 space-y-3">
-          <div className="space-y-1.5">
-            <label className="text-[11px] font-semibold text-slate-700 block">
-              Source table
-            </label>
-            <input
-              autoFocus
-              type="text"
-              value={source}
-              onChange={(e) => {
-                setSource(e.target.value);
-                setErr(null);
-              }}
-              placeholder="e.g. customers"
-              className="w-full h-9 px-3 rounded-lg border border-slate-200 bg-white text-[12px] text-slate-900 font-mono placeholder:text-slate-400 placeholder:font-sans focus:outline-none focus:border-slate-900 transition"
-            />
-          </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setActiveTab("signoff")}
+            className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition"
+          >
+            Review Gate Checklist
+          </button>
 
-          <div className="space-y-1.5">
-            <label className="text-[11px] font-semibold text-slate-700 block">
-              Target table
-            </label>
-            <input
-              type="text"
-              value={target}
-              onChange={(e) => {
-                setTarget(e.target.value);
-                setErr(null);
-              }}
-              placeholder="e.g. accounts"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  handleAdd();
-                }
-              }}
-              className="w-full h-9 px-3 rounded-lg border border-slate-200 bg-white text-[12px] text-slate-900 font-mono placeholder:text-slate-400 placeholder:font-sans focus:outline-none focus:border-slate-900 transition"
-            />
-          </div>
-
-          {err && (
-            <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11.5px] text-red-800">
-              <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-              <span className="leading-relaxed">{err}</span>
-            </div>
+          {pms && (
+            <button
+              onClick={() =>
+                router.push(`/migrations/new?project_id=${projectId}&pair_mapping_set_id=${pms.set_id}`)
+              }
+              className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/20 transition"
+            >
+              <Play className="w-3.5 h-3.5 fill-current" />
+              Start Migration
+            </button>
           )}
         </div>
-
-        {/* Footer */}
-        <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/60 flex items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-9 px-3.5 rounded-lg text-[12px] font-medium text-slate-600 hover:bg-slate-100 transition"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleAdd}
-            disabled={!source.trim() || !target.trim()}
-            className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg bg-slate-900 text-white text-[12px] font-medium hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Add pair
-          </button>
-        </div>
-      </div>
+      </footer>
     </div>
   );
 }
