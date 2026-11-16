@@ -533,6 +533,8 @@ export default function NewConnectorPage() {
                   pingResult={pingResult}
                   selectedTableNames={selectedTableNames}
                   toggleTable={toggleTable}
+                  selectedPreset={selectedPreset}
+                  formData={formData}
                 />
               )}
             </div>
@@ -616,10 +618,14 @@ function DiscoveryPanel({
   pingResult,
   selectedTableNames,
   toggleTable,
+  selectedPreset,
+  formData,
 }: {
   pingResult: PreConnectResponse;
   selectedTableNames: Record<string, boolean>;
   toggleTable: (name: string) => void;
+  selectedPreset?: ConnectorDefinition | null;
+  formData?: Record<string, any>;
 }) {
   const tables = pingResult.discovered_tables || [];
   const [search, setSearch] = useState("");
@@ -627,7 +633,15 @@ function DiscoveryPanel({
   const [activeName, setActiveName] = useState<string | null>(
     tables[0]?.name ?? null,
   );
-  const [tab, setTab] = useState<Tab>("schema");
+  const [tab, setTab] = useState<Tab>("data");
+
+  // Paginated live rows state
+  const [dataRows, setDataRows] = useState<Record<string, any>[]>([]);
+  const [dataOffset, setDataOffset] = useState(0);
+  const [dataLimit, setDataLimit] = useState(25);
+  const [dataLoading, setDataLoading] = useState(false);
+  const [dataTotal, setDataTotal] = useState<number | null>(null);
+  const [dataError, setDataError] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -653,6 +667,44 @@ function DiscoveryPanel({
     () => tables.find((t) => t.name === activeName) || tables[0] || null,
     [tables, activeName],
   );
+
+  React.useEffect(() => {
+    setDataOffset(0);
+  }, [active?.name]);
+
+  const fetchLiveRows = React.useCallback(async () => {
+    if (!active?.name || !selectedPreset) return;
+    setDataLoading(true);
+    setDataError(null);
+    try {
+      const res = await connectorsApi.previewPreConnectTable({
+        connector_type: selectedPreset.id,
+        connection_config: formData || {},
+        table_name: active.name,
+        offset: dataOffset,
+        limit: dataLimit,
+      });
+      setDataRows(res.rows || []);
+      setDataTotal(res.total ?? active.row_count);
+    } catch (err: any) {
+      if (active.sample_records && active.sample_records.length > 0) {
+        setDataRows(active.sample_records);
+      } else {
+        setDataRows([]);
+      }
+      setDataError(err.message || "Failed to load rows");
+    } finally {
+      setDataLoading(false);
+    }
+  }, [active?.name, active?.sample_records, active?.row_count, selectedPreset, formData, dataOffset, dataLimit]);
+
+  React.useEffect(() => {
+    if (active?.sample_records && active.sample_records.length > 0 && dataOffset === 0) {
+      setDataRows(active.sample_records);
+      setDataTotal(active.row_count || active.sample_records.length);
+    }
+    fetchLiveRows();
+  }, [active?.name, dataOffset, dataLimit]);
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -832,16 +884,20 @@ function DiscoveryPanel({
                   </div>
                   <div className="flex items-center -mb-px">
                     <TabBtn
-                      active={tab === "schema"}
-                      onClick={() => setTab("schema")}
-                      icon={TableIcon}
-                      label="Schema"
-                    />
-                    <TabBtn
                       active={tab === "data"}
                       onClick={() => setTab("data")}
                       icon={Database}
-                      label={`Data (${active.sample_records.length})`}
+                      label={
+                        dataLoading
+                          ? "Data (loading…)"
+                          : `Data (${dataTotal !== null ? dataTotal.toLocaleString() : dataRows.length})`
+                      }
+                    />
+                    <TabBtn
+                      active={tab === "schema"}
+                      onClick={() => setTab("schema")}
+                      icon={TableIcon}
+                      label={`Schema (${active.columns.length})`}
                     />
                     <TabBtn
                       active={tab === "raw"}
@@ -853,8 +909,19 @@ function DiscoveryPanel({
                 </div>
 
                 {tab === "schema" && <SchemaTab columns={active.columns} />}
-                {tab === "data" && <DataTab records={active.sample_records} />}
-                {tab === "raw" && <RawTab records={active.sample_records} />}
+                {tab === "data" && (
+                  <DataTab
+                    records={dataRows}
+                    loading={dataLoading}
+                    offset={dataOffset}
+                    limit={dataLimit}
+                    total={dataTotal}
+                    error={dataError}
+                    onPageChange={(newOffset) => setDataOffset(newOffset)}
+                    onRefresh={fetchLiveRows}
+                  />
+                )}
+                {tab === "raw" && <RawTab records={dataRows} />}
               </>
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center text-slate-400 gap-1">
@@ -965,74 +1032,160 @@ function SchemaTab({ columns }: { columns: any[] }) {
   );
 }
 
-function DataTab({ records }: { records: Record<string, any>[] }) {
+function DataTab({
+  records,
+  loading,
+  offset,
+  limit,
+  total,
+  error,
+  onPageChange,
+  onRefresh,
+}: {
+  records: Record<string, any>[];
+  loading?: boolean;
+  offset: number;
+  limit: number;
+  total: number | null;
+  error?: string | null;
+  onPageChange: (newOffset: number) => void;
+  onRefresh: () => void;
+}) {
   const columns = useMemo(() => {
     const keys = new Set<string>();
     records.forEach((r) => Object.keys(r).forEach((k) => keys.add(k)));
     return Array.from(keys);
   }, [records]);
 
-  if (records.length === 0) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center text-slate-400 gap-1">
-        <TableIcon className="w-5 h-5" />
-        <span className="text-[11px]">No sample records</span>
-      </div>
-    );
-  }
+  const startRecord = records.length > 0 ? offset + 1 : 0;
+  const endRecord = offset + records.length;
+  const hasPrev = offset > 0;
+  const hasNext = records.length === limit && (total === null || endRecord < total);
 
   return (
-    <div className="flex-1 overflow-auto min-h-0">
-      <table className="w-full text-left text-[11px] border-collapse">
-        <thead className="bg-slate-50 text-slate-500 text-[9.5px] font-semibold uppercase tracking-wider border-b border-slate-200 sticky top-0 z-10">
-          <tr>
-            <th className="py-1.5 px-2 w-8 sticky left-0 bg-slate-50 z-20">
-              #
-            </th>
-            {columns.map((c) => (
-              <th key={c} className="py-1.5 px-2 font-mono whitespace-nowrap">
-                {c}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {records.map((r, i) => (
-            <tr key={i} className="hover:bg-slate-50/50 align-top">
-              <td className="py-1 px-2 text-slate-400 font-mono text-[9.5px] sticky left-0 bg-white">
-                {i + 1}
-              </td>
-              {columns.map((c) => {
-                const val = r[c];
-                let display: string;
-                let tone = "text-slate-800";
-                if (val === null || val === undefined) {
-                  display = "∅";
-                  tone = "text-slate-300";
-                } else if (typeof val === "object") {
-                  display = JSON.stringify(val);
-                  tone = "text-slate-500 font-mono text-[9.5px]";
-                } else {
-                  display = String(val);
-                  if (typeof val === "number")
-                    tone = "text-blue-700 font-mono";
-                  else if (typeof val === "boolean")
-                    tone = val ? "text-emerald-700" : "text-red-700";
-                }
-                return (
-                  <td
-                    key={c}
-                    className={`py-1 px-2 align-top whitespace-nowrap max-w-[240px] truncate ${tone}`}
-                    title={display}
-                  >
-                    {display}
+    <div className="flex-1 flex flex-col min-h-0 bg-white">
+      {/* Live Serverless Pagination Bar */}
+      <div className="px-3 py-1.5 border-b border-slate-100 flex items-center justify-between gap-2 shrink-0 bg-slate-50/70 text-[10.5px]">
+        <div className="flex items-center gap-2 text-slate-600">
+          {loading ? (
+            <span className="flex items-center gap-1.5 text-blue-600 font-medium">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              Loading live records from database…
+            </span>
+          ) : (
+            <span className="font-mono tabular-nums">
+              Showing <strong>{startRecord}</strong>–<strong>{endRecord}</strong> of{" "}
+              <strong>{total !== null ? total.toLocaleString() : "many"}</strong> rows
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={loading}
+            title="Refresh rows"
+            className="p-1 rounded text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 disabled:opacity-40"
+          >
+            <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
+          </button>
+          <div className="h-3 w-px bg-slate-200 mx-0.5" />
+          <button
+            type="button"
+            disabled={!hasPrev || loading}
+            onClick={() => onPageChange(Math.max(0, offset - limit))}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-[10px]"
+          >
+            <ChevronLeft className="w-2.5 h-2.5" />
+            Prev
+          </button>
+          <button
+            type="button"
+            disabled={!hasNext || loading}
+            onClick={() => onPageChange(offset + limit)}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-[10px]"
+          >
+            Next
+            <ChevronRight className="w-2.5 h-2.5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Grid content */}
+      {records.length === 0 ? (
+        <div className="flex-1 flex flex-col items-center justify-center text-slate-400 gap-1.5 p-6">
+          {loading ? (
+            <>
+              <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+              <span className="text-[11px] text-slate-600">Querying live database rows…</span>
+            </>
+          ) : (
+            <>
+              <TableIcon className="w-6 h-6 text-slate-300" />
+              <span className="text-[11px] text-slate-500 font-medium">
+                {error || "This table is currently empty (0 rows)"}
+              </span>
+              <button
+                type="button"
+                onClick={onRefresh}
+                className="mt-1 text-[10px] text-blue-600 hover:underline"
+              >
+                Click to reload
+              </button>
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="flex-1 overflow-auto min-h-0">
+          <table className="w-full text-left text-[11px] border-collapse">
+            <thead className="bg-slate-50 text-slate-500 text-[9.5px] font-semibold uppercase tracking-wider border-b border-slate-200 sticky top-0 z-10">
+              <tr>
+                <th className="py-1.5 px-2 w-10 sticky left-0 bg-slate-50 z-20">#</th>
+                {columns.map((c) => (
+                  <th key={c} className="py-1.5 px-2 font-mono whitespace-nowrap">
+                    {c}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {records.map((r, i) => (
+                <tr key={i} className="hover:bg-slate-50/60 align-top transition">
+                  <td className="py-1 px-2 text-slate-400 font-mono text-[9.5px] sticky left-0 bg-white">
+                    {offset + i + 1}
                   </td>
-                );
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+                  {columns.map((c) => {
+                    const val = r[c];
+                    let display: string;
+                    let tone = "text-slate-800";
+                    if (val === null || val === undefined) {
+                      display = "∅";
+                      tone = "text-slate-300 italic";
+                    } else if (typeof val === "object") {
+                      display = JSON.stringify(val);
+                      tone = "text-slate-500 font-mono text-[9.5px]";
+                    } else {
+                      display = String(val);
+                      if (typeof val === "number") tone = "text-blue-700 font-mono";
+                      else if (typeof val === "boolean")
+                        tone = val ? "text-emerald-700 font-medium" : "text-red-700 font-medium";
+                    }
+                    return (
+                      <td
+                        key={c}
+                        className={`py-1.5 px-2 align-top whitespace-nowrap max-w-[280px] truncate ${tone}`}
+                        title={display}
+                      >
+                        {display}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

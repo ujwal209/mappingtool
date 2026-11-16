@@ -90,6 +90,14 @@ class PreConnectTestRequest(BaseModel):
     environment: Optional[str] = "Production"
 
 
+class PreConnectPreviewRequest(BaseModel):
+    connector_type: str
+    connection_config: Dict[str, Any] = Field(default_factory=dict)
+    table_name: str
+    offset: int = 0
+    limit: int = 25
+
+
 class PreConnectTestResponse(BaseModel):
     status: str
     latency_ms: float

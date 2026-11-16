@@ -433,6 +433,30 @@ export const connectorsApi = {
     return res.json();
   },
 
+  /** Fetch live paginated rows for a table during pre-connect. */
+  async previewPreConnectTable(payload: {
+    connector_type: string;
+    connection_config: Record<string, any>;
+    table_name: string;
+    offset?: number;
+    limit?: number;
+  }): Promise<{
+    table_name: string;
+    rows: Record<string, any>[];
+    offset: number;
+    limit: number;
+    total: number | null;
+    has_more: boolean;
+  }> {
+    const res = await fetch(`${API_BASE}/systems/test-pre-connect/preview`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(await parseError(res));
+    return res.json();
+  },
+
   /** List connectors for a project. */
   async listSystems(projectId?: string): Promise<SystemItem[]> {
     const url = new URL(`${API_BASE}/systems`);

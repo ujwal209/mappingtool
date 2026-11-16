@@ -32,6 +32,7 @@ from app.models.schemas import (
     DiscoveredTableItem,
     EndpointCreateRequest,
     EndpointTestResponse,
+    PreConnectPreviewRequest,
     PreConnectTestRequest,
     PreConnectTestResponse,
     SheetIntakeRequest,
@@ -224,6 +225,63 @@ def test_pre_connect(
         discovered_tables=discovered,
         masked_config=_mask_config(config),
     )
+
+
+@router.post(
+    "/systems/test-pre-connect/preview",
+    response_model=Dict[str, Any],
+    summary="Fetch paginated live rows for a specific table before connecting",
+    response_description="{ table_name, rows, offset, limit, total, has_more }",
+)
+def preview_preconnect_table(
+    req: PreConnectPreviewRequest,
+    auth: AuthContext = Depends(get_auth_context),
+):
+    c_type = (req.connector_type or "memory").lower().strip()
+    config = dict(req.connection_config or {})
+    config.setdefault("endpoint_id", f"preview-{auth.tenant_id}-{c_type}")
+    connector = connector_registry.get_connector(
+        connector_type=c_type,
+        endpoint_config=config,
+    )
+
+    table_name = req.table_name
+    offset = max(0, req.offset)
+    limit = max(1, min(req.limit, 100))
+
+    try:
+        if hasattr(connector, "read_rows"):
+            rows = connector.read_rows(table_name, offset=offset, limit=limit)
+        else:
+            all_rows = connector.read_table(table_name, limit=offset + limit)
+            rows = all_rows[offset : offset + limit]
+
+        total = None
+        try:
+            tbls = connector.list_tables()
+            for t in tbls:
+                if t.get("name") == table_name:
+                    total = int(t.get("row_count", 0))
+                    break
+        except Exception:
+            pass
+
+        return {
+            "table_name": table_name,
+            "rows": rows,
+            "offset": offset,
+            "limit": limit,
+            "total": total,
+            "has_more": len(rows) == limit,
+        }
+    except Exception as e:
+        raise PlatformException(
+            code="PREVIEW_TABLE_FAILED",
+            message=f"Failed to read table '{table_name}': {e}",
+            category=ErrorCategory.INTERNAL,
+            status_code=500,
+        )
+
 
 # -------------------------------------------------------------
 # Systems Catalog & Lifecycle
