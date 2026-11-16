@@ -1258,9 +1258,11 @@ class MigrationService:
         run.load_started_at = time.time()
         store.save_migration_run(tenant_id, run)
 
-        cache = getattr(store, "_migration_conn_cache", {}).get(
-            run.run_id, {}
-        )
+        if not hasattr(store, "_migration_conn_cache"):
+            store._migration_conn_cache = {}
+        store._migration_conn_cache.setdefault(run.run_id, {})
+
+        cache = store._migration_conn_cache[run.run_id]
         tgt_conn = cache.get("tgt")
         spool = cache.get("spool", {})
 
@@ -1269,22 +1271,59 @@ class MigrationService:
             if not tgt_sys:
                 raise RuntimeError("Target system disappeared mid-run")
             tgt_conn = self._resolve_connector_for_system(tenant_id, tgt_sys)
-            store._migration_conn_cache.setdefault(run.run_id, {})[
-                "tgt"
-            ] = tgt_conn
+            store._migration_conn_cache[run.run_id]["tgt"] = tgt_conn
 
         BATCH_SIZE = int(
             os.getenv("MIGRATION_BATCH_SIZE", str(DEFAULT_BATCH_SIZE))
         )
 
+        spool_dir = cache.get("spool_dir") or os.path.join(
+            os.getenv("MIGRATION_SPOOL_DIR", "/tmp/migration_spool"),
+            run.run_id,
+        )
+
         for cfg in manifest.table_load_configs:
             spool_path = spool.get(cfg.target_table)
             if not spool_path or not os.path.exists(spool_path):
-                logger.info(
-                    f"[MigrationService] no spool for {cfg.target_table}, "
-                    f"skipping"
+                disk_spool = os.path.join(
+                    spool_dir,
+                    f"{cfg.source_table}__{cfg.target_table}.jsonl",
                 )
-                continue
+                if os.path.exists(disk_spool):
+                    spool_path = disk_spool
+                else:
+                    logger.warning(
+                        f"[MigrationService] no spool found for {cfg.target_table} "
+                        f"(checked cache and {disk_spool}), attempting direct live migration fallback"
+                    )
+                    try:
+                        src_sys = store.get_system(tenant_id, manifest.source_system_id)
+                        src_conn = self._resolve_connector_for_system(tenant_id, src_sys)
+                        pms = pair_mapping_service.get_set(tenant_id, manifest.pair_mapping_set_id)
+                        pair = next((p for p in pms.pairs if p.source_table == cfg.source_table and p.target_table == cfg.target_table), None) if pms else None
+                        if pair and hasattr(src_conn, "read_table"):
+                            rule_pkg = self._build_rule_package_from_pair(pair)
+                            live_rows = src_conn.read_table(cfg.source_table, limit=BATCH_SIZE)
+                            if live_rows:
+                                tres = transform_worker.execute_partition(
+                                    tenant_id=tenant_id,
+                                    run_id=run.run_id,
+                                    partition_id=f"{cfg.source_table}-live",
+                                    source_records=live_rows,
+                                    rule_package=rule_pkg,
+                                    mapping_version_id=manifest.manifest_id,
+                                )
+                                self._write_batch(
+                                    tgt_conn=tgt_conn,
+                                    target_table=cfg.target_table,
+                                    records=tres.get("transformed_records", []),
+                                    idem_key=f"{run.run_id}:{cfg.target_table}",
+                                    run=run,
+                                    load_mode=cfg.load_mode,
+                                )
+                    except Exception as live_err:
+                        logger.error(f"[MigrationService] Live fallback failed for {cfg.target_table}: {live_err}")
+                    continue
 
             try:
                 tgt_conn.begin_snapshot(f"{run.run_id}:{cfg.target_table}")
@@ -1332,6 +1371,13 @@ class MigrationService:
                         load_mode=cfg.load_mode,
                     )
 
+        if run.rows_loaded == 0 and run.rows_failed > 0:
+            run.state = "FAILED"
+            run.phase = MigrationPhase.LOAD
+            if not run.error:
+                detail = run.warnings[0] if run.warnings else "Check database constraints and schema."
+                run.error = f"Target database rejected all writes ({run.rows_failed} rows failed): {detail}"
+
         store.save_migration_run(tenant_id, run)
 
     def _write_batch(
@@ -1354,12 +1400,25 @@ class MigrationService:
             )
             run.rows_loaded += res.accepted_records
             run.rows_failed += res.rejected_records
+            if res.rejection_reasons:
+                for rj in res.rejection_reasons:
+                    msg = f"[{target_table}] {rj}"
+                    if msg not in run.warnings:
+                        run.warnings.append(msg)
+                    logger.warning(f"[MigrationService] {msg}")
+                if not run.error and res.accepted_records == 0:
+                    run.error = f"Database write failed for {target_table}: {res.rejection_reasons[0]}"
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 f"[MigrationService] write_batch failed for "
                 f"{target_table} ({len(records)} rows): {e}"
             )
             run.rows_failed += len(records)
+            err_msg = f"Database write failed for {target_table}: {e}"
+            if err_msg not in run.warnings:
+                run.warnings.append(err_msg)
+            if not run.error:
+                run.error = err_msg
 
     def _cleanup_spool(self, run_id: str) -> None:
         cache = getattr(store, "_migration_conn_cache", {}).get(run_id, {})
@@ -1566,7 +1625,7 @@ class MigrationService:
                     transforms[tgt_c] = {
                         "op": "direct_cast",
                         "source_cols": [src_c],
-                        "default": "",
+                        "default": None,
                         "target_type": "string",
                     }
 

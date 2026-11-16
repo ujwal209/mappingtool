@@ -19,6 +19,8 @@ import {
   Ban,
   ShieldCheck,
   Play,
+  Copy,
+  Check,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -156,6 +158,14 @@ function Inner() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [acting, setActing] = useState(false);
+  const [copiedError, setCopiedError] = useState(false);
+
+  const handleCopyError = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedError(true);
+    toast.success("Error copied to clipboard");
+    setTimeout(() => setCopiedError(false), 2000);
+  };
 
   // ═══════════════════════════════════════════════════════
   // Load run
@@ -448,38 +458,76 @@ function Inner() {
               />
             </div>
 
-            {/* Warnings */}
-            {run.warnings.length > 0 && (
+            {/* Detailed Errors & Database Diagnostics */}
+            {(run.error || run.rows_failed > 0) && (
+              <div className="mt-5 rounded-xl border border-red-200 bg-red-50/90 p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-2 text-red-900 font-semibold text-sm">
+                    <XCircle className="w-4 h-4 text-red-600 shrink-0" />
+                    <span>Database Execution Diagnostics</span>
+                  </div>
+                  {run.error && (
+                    <button
+                      onClick={() => handleCopyError(run.error || "")}
+                      className="inline-flex items-center gap-1 text-[11px] font-medium text-red-700 bg-red-100 hover:bg-red-200 px-2 py-1 rounded transition-colors"
+                      title="Copy error details"
+                    >
+                      {copiedError ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-600" />
+                          <span>Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          <span>Copy Diagnostic</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+
+                {run.error && (
+                  <div className="rounded-lg bg-red-950 text-red-100 p-3 font-mono text-xs overflow-x-auto whitespace-pre-wrap leading-relaxed shadow-inner">
+                    {run.error}
+                  </div>
+                )}
+
+                {run.warnings.length > 0 && (
+                  <div className="space-y-1.5 pt-1">
+                    <p className="text-xs font-semibold text-red-900 uppercase tracking-wider">
+                      Rejection & Constraint Details ({run.warnings.length})
+                    </p>
+                    <div className="max-h-56 overflow-y-auto space-y-1 rounded-lg border border-red-200 bg-white p-2.5">
+                      {run.warnings.map((w, idx) => (
+                        <div key={idx} className="font-mono text-[11px] text-red-800 break-all leading-normal">
+                          • {w}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* General Warnings (if no error and no failed rows) */}
+            {!run.error && run.rows_failed === 0 && run.warnings.length > 0 && (
               <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
                 <div className="flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-amber-900">
-                      {run.warnings.length} warning
-                      {run.warnings.length === 1 ? "" : "s"}
+                      {run.warnings.length} warning{run.warnings.length === 1 ? "" : "s"}
                     </p>
                     <ul className="mt-1 space-y-0.5 text-xs text-amber-800 list-disc pl-4">
-                      {run.warnings.slice(0, 5).map((w, i) => (
-                        <li key={i} className="break-all">
+                      {run.warnings.map((w, i) => (
+                        <li key={i} className="break-all font-mono">
                           {w}
                         </li>
                       ))}
-                      {run.warnings.length > 5 && (
-                        <li className="italic text-amber-700">
-                          +{run.warnings.length - 5} more
-                        </li>
-                      )}
                     </ul>
                   </div>
                 </div>
-              </div>
-            )}
-
-            {/* Error */}
-            {run.error && (
-              <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 break-all">
-                <strong className="font-semibold">Error: </strong>
-                {run.error}
               </div>
             )}
           </div>

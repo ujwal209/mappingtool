@@ -45,11 +45,19 @@ class LoadWorker:
                 "idempotency_key": idempotency_key,
                 "batch_index": i // batch_size,
             }
-            res = target_connector.write_batch(batch, idempotency_context)
-            total_accepted += res.accepted_records
-            total_rejected += res.rejected_records
-            all_target_ids.extend(res.target_ids)
-            all_rejections.extend(res.rejection_reasons)
+            try:
+                res = target_connector.write_batch(batch, idempotency_context)
+                total_accepted += res.accepted_records
+                total_rejected += res.rejected_records
+                all_target_ids.extend(res.target_ids)
+                all_rejections.extend(res.rejection_reasons)
+            except Exception as e:
+                from app.core.logging import get_logger
+                get_logger("load_worker").error(
+                    f"write_batch exception for batch {i // batch_size} of {target_dataset_name}: {e}"
+                )
+                total_rejected += len(batch)
+                all_rejections.append(f"Batch write exception: {e}")
 
         return WriteBatchResult(
             accepted_records=total_accepted,
@@ -112,6 +120,7 @@ class LoadWorker:
                     f"{target_dataset_name}: {e}"
                 )
                 total_rejected += len(batch)
+                all_rejections.append(f"Table {target_dataset_name} batch {batch_index} write failed: {e}")
 
             batch_index += 1
 

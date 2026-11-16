@@ -8,6 +8,7 @@ Every evaluation returns value + status metadata (OK, WARNING, REJECT, ERROR).
 
 import re
 import hashlib
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from enum import Enum
 from pydantic import BaseModel, Field
@@ -38,18 +39,45 @@ def op_trim(val: Any) -> RuleOutput:
 
 
 def op_cast(val: Any, target_type: str) -> RuleOutput:
-    if val is None:
+    if val is None or (isinstance(val, str) and not val.strip()):
         return RuleOutput(value=None, status=RuleEvaluationStatus.OK, applied_op="cast")
-    t = target_type.lower()
+    t = (target_type or "").lower().strip()
     try:
-        if t in ("int", "integer"):
-            return RuleOutput(value=int(float(val)), status=RuleEvaluationStatus.OK, applied_op="cast")
-        elif t in ("float", "double", "decimal"):
-            return RuleOutput(value=float(val), status=RuleEvaluationStatus.OK, applied_op="cast")
-        elif t in ("bool", "boolean"):
-            str_val = str(val).lower()
+        if t in ("int", "integer", "bigint", "tinyint", "smallint", "mediumint"):
+            if isinstance(val, bool):
+                return RuleOutput(value=1 if val else 0, status=RuleEvaluationStatus.OK, applied_op="cast")
+            cleaned = re.sub(r"[^\d.-]", "", str(val))
+            return RuleOutput(value=int(round(float(cleaned))) if cleaned else 0, status=RuleEvaluationStatus.OK, applied_op="cast")
+        elif t in ("float", "double", "decimal", "numeric"):
+            cleaned = re.sub(r"[^\d.-]", "", str(val))
+            return RuleOutput(value=float(cleaned) if cleaned else 0.0, status=RuleEvaluationStatus.OK, applied_op="cast")
+        elif t in ("bool", "boolean", "bit"):
+            str_val = str(val).lower().strip()
             return RuleOutput(value=str_val in ("true", "1", "yes", "t", "y"), status=RuleEvaluationStatus.OK, applied_op="cast")
-        elif t in ("str", "string"):
+        elif t in ("datetime", "timestamp"):
+            val_str = str(val).strip()
+            if isinstance(val, (int, float)) or (val_str.isdigit() and len(val_str) >= 9):
+                epoch = float(val)
+                if epoch > 1e11:
+                    epoch = epoch / 1000.0
+                dt = datetime.fromtimestamp(epoch, timezone.utc)
+                return RuleOutput(value=dt.strftime("%Y-%m-%d %H:%M:%S"), status=RuleEvaluationStatus.OK, applied_op="cast")
+            cleaned_dt = val_str.replace("T", " ").replace("Z", "")
+            if "+" in cleaned_dt:
+                cleaned_dt = cleaned_dt.split("+")[0]
+            if "." in cleaned_dt and len(cleaned_dt.split(".")[1]) > 6:
+                cleaned_dt = cleaned_dt.split(".")[0]
+            return RuleOutput(value=cleaned_dt.strip(), status=RuleEvaluationStatus.OK, applied_op="cast")
+        elif t == "date":
+            val_str = str(val).strip()
+            if isinstance(val, (int, float)) or (val_str.isdigit() and len(val_str) >= 9):
+                epoch = float(val)
+                if epoch > 1e11:
+                    epoch = epoch / 1000.0
+                dt = datetime.fromtimestamp(epoch, timezone.utc)
+                return RuleOutput(value=dt.strftime("%Y-%m-%d"), status=RuleEvaluationStatus.OK, applied_op="cast")
+            return RuleOutput(value=val_str[:10], status=RuleEvaluationStatus.OK, applied_op="cast")
+        elif t in ("str", "string", "varchar", "text", "char"):
             return RuleOutput(value=str(val), status=RuleEvaluationStatus.OK, applied_op="cast")
         return RuleOutput(value=val, status=RuleEvaluationStatus.OK, applied_op="cast")
     except Exception as e:
@@ -138,13 +166,38 @@ def evaluate_transformation_rule(
     primary_src = src_cols[0]
     raw_val = source_record.get(primary_src)
 
-    if op == "direct":
+    if op in ("direct", "direct_cast"):
+        target_type = rule_spec.get("target_type")
+        if target_type and target_type.lower() not in ("string", "str", "varchar", "text", "char"):
+            casted = op_cast(raw_val, target_type)
+            if casted.value is not None:
+                return casted
         return op_coalesce(raw_val, default_val)
     elif op == "trim":
         return op_trim(raw_val)
-    elif op == "cast":
+    elif op in ("cast", "type_cast"):
         target_type = rule_spec.get("target_type", "string")
         casted = op_cast(raw_val, target_type)
+        return casted if casted.value is not None else op_coalesce(None, default_val)
+    elif op in ("uppercase", "upper"):
+        if raw_val is None:
+            return op_coalesce(None, default_val)
+        return RuleOutput(value=str(raw_val).upper(), status=RuleEvaluationStatus.OK, applied_op="uppercase")
+    elif op in ("lowercase", "lower"):
+        if raw_val is None:
+            return op_coalesce(None, default_val)
+        return RuleOutput(value=str(raw_val).lower(), status=RuleEvaluationStatus.OK, applied_op="lowercase")
+    elif op in ("cents_to_dollars", "divide_by_100"):
+        if raw_val is None:
+            return op_coalesce(None, default_val)
+        try:
+            cleaned = re.sub(r"[^\d.-]", "", str(raw_val))
+            val_flt = round(float(cleaned) / 100.0, 2)
+            return RuleOutput(value=val_flt, status=RuleEvaluationStatus.OK, applied_op="cents_to_dollars")
+        except Exception:
+            return op_coalesce(raw_val, default_val)
+    elif op in ("epoch_to_datetime", "from_epoch", "timestamp_to_datetime"):
+        casted = op_cast(raw_val, "datetime")
         return casted if casted.value is not None else op_coalesce(None, default_val)
     elif op == "normalize_text":
         return op_normalize_text(raw_val)
