@@ -325,10 +325,26 @@ class PostgresConnector(BaseConnector):
             logger.warning(
                 f"[Postgres] test_connection failed → {_mask_dsn(self.dsn)} :: {e}"
             )
+            err_msg = str(e)
+            try:
+                p = urlparse(self.dsn)
+                host = (p.hostname or "").lower()
+                if "supabase.co" in host and ("timeout" in err_msg.lower() or "timed out" in err_msg.lower() or "10060" in err_msg):
+                    ref = host.replace("db.", "").replace(".supabase.co", "")
+                    err_msg = (
+                        f"Supabase Direct Connection timed out on '{host}:5432'. "
+                        f"Supabase direct hosts require IPv6, which is not supported by your network. "
+                        f"SOLUTION: In your Supabase Dashboard, go to Project Settings -> Database -> Connection String, "
+                        f"select 'Connection Pooler' (Session or Transaction mode, port 6543), "
+                        f"and use the pooler URI (e.g. postgresql://postgres.{ref}:[YOUR-PASSWORD]@aws-0-ap-south-1.pooler.supabase.com:6543/postgres)."
+                    )
+            except Exception:
+                pass
+
             return {
                 "status": "FAILED",
                 "latency_ms": round((time.time() - t0) * 1000, 2),
-                "message": f"Postgres connection failed: {e}",
+                "message": f"Postgres connection failed: {err_msg}",
                 "capabilities": [],
             }
 
