@@ -2,7 +2,6 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import {
@@ -74,7 +73,11 @@ export function ConsoleSidebar({
       label: "Table Matching",
       items: [
         { href: "/table-matching", label: "Pair Sets", icon: Table2 },
-        { href: "/table-matching/discover", label: "Discover Pairs", icon: Compass },
+        {
+          href: "/table-matching/discover",
+          label: "Discover Pairs",
+          icon: Compass,
+        },
       ],
     },
     {
@@ -150,10 +153,6 @@ export function ConsoleSidebar({
       );
     }
 
-    // ── Migrations routing ──────────────────────────────────
-    // /migrations          → list page active
-    // /migrations/{id}     → list page active (detail is a child of list)
-    // /migrations/new      → "Start Migration" active only
     if (href === "/migrations") {
       if (pathname === "/migrations") return true;
       if (pathname === "/migrations/new") return false;
@@ -210,15 +209,24 @@ export function ConsoleSidebar({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  const userInitials = (() => {
+    const name = (user?.full_name || user?.email || "U").trim();
+    const parts = name.split(/\s+/);
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[1][0]).toUpperCase();
+    }
+    return name.slice(0, 2).toUpperCase();
+  })();
+
   const renderSidebarInner = (forceExpanded: boolean) => {
     const collapsed = forceExpanded ? false : isCollapsed;
 
     return (
-      <div className="flex flex-col h-full bg-white text-slate-700 font-sans select-none">
-        {/* Header */}
+      <div className="flex h-full flex-col bg-white text-slate-700 font-sans select-none">
+        {/* Top Brand Header */}
         <div
-          className={`h-16 flex items-center shrink-0 transition-all duration-300 ${
-            collapsed ? "justify-center px-3" : "justify-between px-4"
+          className={`flex h-16 shrink-0 items-center border-b border-slate-100 transition-all duration-300 ${
+            collapsed ? "justify-center px-2" : "justify-between px-4"
           }`}
           style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
         >
@@ -226,81 +234,73 @@ export function ConsoleSidebar({
             <Link
               href="/dashboard"
               onClick={() => setMobileOpen(false)}
-              className="flex items-center justify-center w-10 h-10 rounded-xl hover:bg-slate-100 transition-colors"
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-900 transition hover:border-slate-300 hover:bg-slate-100"
               aria-label="Migration Studio — dashboard"
+              title="Migration Studio"
             >
-              <Image
-                src="/logo.png"
-                alt="MS"
-                width={22}
-                height={22}
-                className="w-[22px] h-[22px] object-contain"
-              />
+              <span className="text-[12px] font-bold tracking-tighter">
+                MS
+              </span>
             </Link>
           ) : (
             <>
               <Link
                 href="/dashboard"
                 onClick={() => setMobileOpen(false)}
-                className="flex flex-col leading-none min-w-0 group"
+                className="flex items-baseline gap-1 py-1 pr-2"
               >
-                <span className="flex items-baseline gap-[3px]">
-                  <span className="text-[17px] font-bold tracking-[-0.03em] text-slate-900 group-hover:text-slate-950 transition-colors">
-                    Migration
-                  </span>
-                  <span className="text-[17px] font-light tracking-[-0.02em] text-slate-400">
-                    Studio
-                  </span>
-                  <span className="inline-block w-1 h-1 rounded-full bg-indigo-500 mb-[2px] ml-[1px]" />
+                <span className="text-[16px] font-bold tracking-[-0.04em] text-slate-900 leading-none">
+                  Migration
                 </span>
-                <span className="mt-1 text-[9px] font-mono uppercase tracking-[0.22em] text-slate-400">
-                  console
+                <span className="text-[16px] font-light tracking-[-0.02em] text-slate-400 leading-none">
+                  Studio
                 </span>
+                <span className="mb-[2px] ml-[1px] h-1.5 w-1.5 rounded-full bg-[#432DD7]" />
               </Link>
 
               {!forceExpanded && (
                 <button
                   onClick={() => setIsCollapsed(true)}
-                  className="hidden lg:flex p-1.5 rounded-md text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors shrink-0"
+                  className="hidden lg:flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-900"
                   title="Collapse sidebar (⌘B)"
                   aria-label="Collapse sidebar"
                 >
-                  <PanelLeftClose className="w-4 h-4" />
+                  <PanelLeftClose className="h-4 w-4" />
                 </button>
               )}
             </>
           )}
         </div>
 
-        {/* Expand handle (only when collapsed on desktop) */}
+        {/* Desktop Expand Trigger when Collapsed */}
         {collapsed && !forceExpanded && (
-          <div className="hidden lg:flex justify-center pb-2">
+          <div className="hidden lg:flex justify-center border-b border-slate-100 py-2">
             <button
               onClick={() => setIsCollapsed(false)}
-              className="p-1.5 rounded-md text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-900"
               title="Expand sidebar (⌘B)"
               aria-label="Expand sidebar"
             >
-              <PanelLeftOpen className="w-4 h-4" />
+              <PanelLeftOpen className="h-4 w-4" />
             </button>
           </div>
         )}
 
-        {/* Nav */}
+        {/* Navigation Groups */}
         <nav
-          className={`flex-1 overflow-y-auto sidebar-scrollbar py-2 transition-all duration-300 ${
+          className={`flex-1 overflow-y-auto sidebar-scrollbar py-4 transition-all duration-300 ${
             collapsed ? "px-2" : "px-3"
           }`}
         >
-          <div className={collapsed ? "space-y-3" : "space-y-5"}>
+          <div className={collapsed ? "space-y-4" : "space-y-5"}>
             {navGroups.map((group) => (
               <div key={group.label}>
                 {!collapsed ? (
-                  <p className="px-2 mb-1.5 text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400">
+                  <p className="mb-1.5 px-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
                     {group.label}
                   </p>
                 ) : (
-                  <div className="w-6 h-px bg-slate-200 mx-auto mb-2" />
+                  <div className="mx-auto mb-2.5 h-px w-6 bg-slate-200/80" />
                 )}
 
                 <div className="space-y-0.5">
@@ -312,24 +312,29 @@ export function ConsoleSidebar({
                       return (
                         <div
                           key={item.href}
-                          className="relative group/collapsed"
+                          className="group/collapsed relative"
                         >
                           <Link
                             href={item.href}
                             onClick={() => setMobileOpen(false)}
                             aria-label={item.label}
-                            className={`flex items-center justify-center w-10 h-10 mx-auto rounded-xl transition-all ${
+                            className={`mx-auto flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
                               active
-                                ? "bg-slate-900 text-white shadow-sm"
-                                : "text-slate-500 hover:text-slate-900 hover:bg-slate-100"
+                                ? "bg-slate-100 text-slate-950 ring-1 ring-slate-200/90"
+                                : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
                             }`}
                           >
-                            <Icon className="w-[18px] h-[18px]" />
+                            <Icon
+                              className={`h-[17px] w-[17px] ${
+                                active ? "text-[#432DD7]" : ""
+                              }`}
+                              strokeWidth={active ? 2.1 : 1.75}
+                            />
                           </Link>
 
-                          <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 px-2.5 py-1.5 rounded-lg bg-slate-900 text-white text-[11.5px] font-medium whitespace-nowrap opacity-0 group-hover/collapsed:opacity-100 pointer-events-none transition-opacity duration-150 z-50 shadow-lg">
+                          <div className="pointer-events-none absolute left-full top-1/2 z-50 ml-2.5 -translate-y-1/2 rounded-lg bg-slate-900 px-2.5 py-1.5 text-[11.5px] font-medium whitespace-nowrap text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover/collapsed:opacity-100">
                             {item.label}
-                            <div className="absolute right-full top-1/2 -translate-y-1/2 w-2 h-2 bg-slate-900 rotate-45 -mr-1" />
+                            <div className="absolute right-full top-1/2 -mr-1 h-2 w-2 -translate-y-1/2 rotate-45 bg-slate-900" />
                           </div>
                         </div>
                       );
@@ -342,22 +347,26 @@ export function ConsoleSidebar({
                         onClick={() => setMobileOpen(false)}
                         className={`group relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 transition-colors ${
                           active
-                            ? "bg-slate-900 text-white shadow-sm font-semibold"
-                            : "text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-medium"
+                            ? "bg-slate-100/90 text-slate-950 font-semibold"
+                            : "text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900"
                         }`}
                       >
+                        {active && (
+                          <span className="absolute left-0 top-1.5 bottom-1.5 w-[2.5px] rounded-full bg-[#432DD7]" />
+                        )}
                         <Icon
-                          className={`w-4 h-4 shrink-0 transition-colors ${
+                          className={`h-4 w-4 shrink-0 transition-colors ${
                             active
-                              ? "text-white"
+                              ? "text-[#432DD7]"
                               : "text-slate-400 group-hover:text-slate-700"
                           }`}
+                          strokeWidth={active ? 2.1 : 1.75}
                         />
-                        <span className="truncate text-[13px]">
+                        <span className="break-words text-[13px] leading-snug">
                           {item.label}
                         </span>
                         {item.badge && (
-                          <span className="ml-auto text-[9.5px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 shrink-0">
+                          <span className="ml-auto shrink-0 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[9.5px] text-slate-500">
                             {item.badge}
                           </span>
                         )}
@@ -370,67 +379,66 @@ export function ConsoleSidebar({
           </div>
         </nav>
 
-        {/* Footer */}
+        {/* Account & Session Footer */}
         <div
-          className={`shrink-0 border-t border-slate-100 transition-all duration-300 ${
-            collapsed ? "py-3 px-2" : "p-3"
+          className={`shrink-0 border-t border-slate-100 bg-slate-50/40 transition-all duration-300 ${
+            collapsed ? "px-2 py-3" : "p-3"
           }`}
           style={{
             paddingBottom: `calc(12px + env(safe-area-inset-bottom, 0px))`,
           }}
         >
           {collapsed ? (
-            <div className="flex flex-col items-center gap-1">
+            <div className="flex flex-col items-center gap-2">
               <Link
                 href="/profile"
                 onClick={() => setMobileOpen(false)}
-                className="relative group/avatar flex items-center justify-center w-10 h-10 rounded-xl hover:bg-slate-100 transition"
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-[11px] font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
                 title={user?.full_name || "Profile"}
               >
-                <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 text-slate-700 font-bold flex items-center justify-center text-[11px] shrink-0">
-                  {user?.full_name?.charAt(0).toUpperCase() || "U"}
-                </div>
+                {userInitials}
               </Link>
               <button
                 onClick={() => {
                   setMobileOpen(false);
                   logout();
                 }}
-                className="p-1.5 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600"
                 title="Sign out"
+                aria-label="Sign out"
               >
-                <LogOut className="w-3.5 h-3.5" />
+                <LogOut className="h-3.5 w-3.5" />
               </button>
             </div>
           ) : (
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <Link
                 href="/profile"
                 onClick={() => setMobileOpen(false)}
-                className="flex items-center gap-2.5 rounded-xl hover:bg-slate-50 transition-colors p-1.5 min-w-0"
-                title="View profile"
+                className="flex items-start gap-2.5 rounded-lg border border-transparent p-2 transition-colors hover:border-slate-200/80 hover:bg-white"
               >
-                <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 text-slate-700 font-bold flex items-center justify-center text-[11px] shrink-0">
-                  {user?.full_name?.charAt(0).toUpperCase() || "U"}
+                <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-[11px] font-semibold text-slate-800">
+                  {userInitials}
                 </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-[12px] font-semibold text-slate-900 truncate leading-tight">
+                <div className="min-w-0 flex-1 space-y-0.5">
+                  <p className="break-words text-[12.5px] font-semibold leading-tight text-slate-900">
                     {user?.full_name || "Account"}
                   </p>
-                  <p className="text-[10px] text-slate-500 truncate leading-tight">
-                    {user?.email || ""}
-                  </p>
+                  {user?.email && (
+                    <p className="break-all text-[11px] leading-tight text-slate-500">
+                      {user.email}
+                    </p>
+                  )}
                 </div>
               </Link>
 
-              <div className="flex items-center gap-1">
+              <div className="grid grid-cols-2 gap-1.5">
                 <Link
                   href="/profile"
                   onClick={() => setMobileOpen(false)}
-                  className="flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors touch-manipulation"
-                  title="Settings"
+                  className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200/80 bg-white px-2.5 py-1.5 text-[11.5px] font-medium text-slate-700 transition-colors hover:bg-slate-50 hover:text-slate-950 touch-manipulation"
                 >
-                  <Settings className="w-3.5 h-3.5" />
+                  <Settings className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                   <span>Settings</span>
                 </Link>
                 <button
@@ -438,10 +446,9 @@ export function ConsoleSidebar({
                     setMobileOpen(false);
                     logout();
                   }}
-                  className="flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] font-medium text-slate-600 hover:text-red-600 hover:bg-red-50 transition-colors touch-manipulation"
-                  title="Sign out"
+                  className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200/80 bg-white px-2.5 py-1.5 text-[11.5px] font-medium text-slate-700 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 touch-manipulation"
                 >
-                  <LogOut className="w-3.5 h-3.5" />
+                  <LogOut className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                   <span>Sign out</span>
                 </button>
               </div>
@@ -454,16 +461,16 @@ export function ConsoleSidebar({
 
   return (
     <>
-      {/* Desktop sidebar */}
+      {/* Desktop Sticky Rail */}
       <aside
-        className={`hidden lg:flex shrink-0 flex-col h-screen sticky top-0 bg-white border-r border-slate-200 z-30 transition-[width] duration-300 ease-in-out ${
-          isCollapsed ? "w-[76px]" : "w-[260px]"
+        className={`hidden lg:flex shrink-0 flex-col h-screen sticky top-0 bg-white border-r border-slate-200/90 z-30 transition-[width] duration-300 ease-in-out ${
+          isCollapsed ? "w-[74px]" : "w-[260px]"
         }`}
       >
         {renderSidebarInner(false)}
       </aside>
 
-      {/* Mobile drawer */}
+      {/* Mobile Slide-Over Drawer */}
       <div
         className={`fixed inset-0 z-[60] lg:hidden ${
           mobileOpen ? "" : "pointer-events-none"
@@ -471,7 +478,7 @@ export function ConsoleSidebar({
         aria-hidden={!mobileOpen}
       >
         <div
-          className={`absolute inset-0 bg-slate-900/50 backdrop-blur-sm transition-opacity duration-200 ${
+          className={`absolute inset-0 bg-slate-950/40 backdrop-blur-xs transition-opacity duration-200 ${
             mobileOpen ? "opacity-100" : "opacity-0"
           }`}
           onClick={() => setMobileOpen(false)}
@@ -492,10 +499,10 @@ export function ConsoleSidebar({
         >
           <button
             onClick={() => setMobileOpen(false)}
-            className="absolute top-3 right-3 z-10 p-2 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors touch-manipulation"
+            className="absolute top-3.5 right-3.5 z-10 flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 touch-manipulation"
             aria-label="Close menu"
           >
-            <X className="w-5 h-5" />
+            <X className="h-4 w-4" />
           </button>
 
           <div className="flex-1 min-h-0">{renderSidebarInner(true)}</div>

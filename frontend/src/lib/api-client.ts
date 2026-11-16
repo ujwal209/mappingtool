@@ -310,9 +310,16 @@ class ApiClient {
     const url = `${API_BASE}${path}`;
     const headers = { ...this.getHeaders(), ...(options.headers as Record<string, string>) };
 
+    // Default 10s timeout to prevent hanging requests from blocking the UI
+    let signal = options.signal;
+    if (!signal && typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+      signal = AbortSignal.timeout(10000);
+    }
+
     const res = await fetch(url, {
       ...options,
       headers,
+      signal,
     });
 
     if (!res.ok) {

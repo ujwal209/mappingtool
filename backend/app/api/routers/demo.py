@@ -73,7 +73,7 @@ def bootstrap_warehouse_demo(
     to verify connectors work end-to-end.
     """
     # Ensure there is a project
-    projects = store.list_projects(auth.tenant_id)
+    projects = store.list_projects(auth.tenant_id, user_id=auth.user_id, user_email=auth.email)
     if projects:
         project_id = projects[0].project_id
     else:
@@ -82,6 +82,9 @@ def bootstrap_warehouse_demo(
             tenant_id=auth.tenant_id,
             name="Warehouse Demo Project",
             description="Bootstrap project for the warehouse demo",
+            owners=[auth.email] if auth.email else [],
+            created_by=auth.user_id,
+            created_by_email=auth.email,
         )
         project_id = proj.project_id
 

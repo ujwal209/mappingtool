@@ -55,6 +55,8 @@ def create_project(
         name=req.name,
         description=req.description,
         owners=req.owners,
+        created_by=auth.user_id,
+        created_by_email=auth.email,
         domain=req.domain,
         methodology=req.methodology,
         source_ecosystem=req.source_ecosystem,
@@ -77,14 +79,43 @@ def create_project(
     "/projects",
     response_model=List[Project],
     summary="List Migration Projects",
-    response_description="List of all active and archived projects within the caller's tenant boundary",
+    response_description="List of all active and archived projects belonging to the authenticated user",
 )
 def list_projects(auth: AuthContext = Depends(get_auth_context)):
     """
-    **Retrieve all migration projects** belonging to the authenticated tenant.
-    Enforces strict tenant isolation boundary (TA-009).
+    **Retrieve all migration projects** belonging to the authenticated user.
+    Enforces strict user boundary isolation and multi-tenant boundary.
     """
-    return project_service.list_projects(auth.tenant_id)
+    if not auth.email and (not auth.user_id or auth.user_id in ("usr-anonymous", "usr-developer")):
+        return []
+
+    return project_service.list_projects(
+        tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
+        user_email=auth.email,
+    )
+
+
+@router.get(
+    "/projects/{project_id}",
+    response_model=Project,
+    summary="Get Migration Project Details",
+    response_description="Migration project details if caller is authorized",
+)
+def get_project(project_id: str, auth: AuthContext = Depends(get_auth_context)):
+    """
+    Retrieve project details with authorization checks.
+    """
+    proj = project_service.get_project(auth.tenant_id, project_id)
+    if not project_service.can_user_access_project(proj, auth.user_id, auth.email):
+        from app.core.errors import PlatformException, ErrorCategory
+        raise PlatformException(
+            code="ACCESS_DENIED",
+            message="You do not have permission to access this project.",
+            category=ErrorCategory.ACCESS_DENIED,
+            status_code=403,
+        )
+    return proj
 
 
 @router.post(

@@ -18,6 +18,8 @@ class ProjectService:
         name: str,
         description: Optional[str] = None,
         owners: Optional[List[str]] = None,
+        created_by: Optional[str] = None,
+        created_by_email: Optional[str] = None,
         domain: Optional[str] = "Banking & Financial Services",
         methodology: Optional[str] = "Phased Wave Replication",
         source_ecosystem: Optional[str] = "Legacy Oracle / SAP ERP",
@@ -29,11 +31,17 @@ class ProjectService:
         planned_waves: Optional[int] = 3,
         rehearsal_strategy: Optional[str] = "Dual-Run Shadow Execution",
     ) -> Project:
+        resolved_owners = list(owners or [])
+        if created_by_email and created_by_email not in resolved_owners:
+            resolved_owners.insert(0, created_by_email)
+
         project = Project(
             tenant_id=tenant_id,
             name=name,
             description=description,
-            owners=owners or [],
+            owners=resolved_owners,
+            created_by=created_by,
+            created_by_email=created_by_email,
             lifecycle_state=LifecycleState.ACTIVE,
             domain=domain,
             methodology=methodology,
@@ -71,6 +79,34 @@ class ProjectService:
             
         return project
 
+    def can_user_access_project(
+        self,
+        project: Project,
+        user_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+    ) -> bool:
+        """Determines if the specified user has authorization to view/access the project."""
+        if not user_id and not user_email:
+            return False
+
+        # Match by creator user_id
+        if user_id and getattr(project, "created_by", None) == user_id:
+            return True
+
+        # Match by creator email
+        creator_email = getattr(project, "created_by_email", None)
+        if user_email and creator_email and creator_email.lower() == user_email.lower():
+            return True
+
+        # Match in owners list
+        owners = [str(o).lower() for o in (getattr(project, "owners", None) or [])]
+        if user_email and user_email.lower() in owners:
+            return True
+        if user_id and user_id.lower() in owners:
+            return True
+
+        return False
+
     def get_project(self, tenant_id: str, project_id: str) -> Project:
         proj = store.get_project(tenant_id, project_id)
         if not proj:
@@ -82,8 +118,13 @@ class ProjectService:
             )
         return proj
 
-    def list_projects(self, tenant_id: str) -> List[Project]:
-        return store.list_projects(tenant_id)
+    def list_projects(
+        self,
+        tenant_id: str,
+        user_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+    ) -> List[Project]:
+        return store.list_projects(tenant_id, user_id=user_id, user_email=user_email)
 
     def create_wave(
         self,

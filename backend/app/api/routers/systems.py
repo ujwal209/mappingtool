@@ -244,7 +244,7 @@ def list_systems(
     effective_project_id = project_id
     if not effective_project_id:
         try:
-            projects = store.list_projects(auth.tenant_id)
+            projects = store.list_projects(auth.tenant_id, user_id=auth.user_id, user_email=auth.email)
             if projects:
                 effective_project_id = projects[0].project_id
         except Exception:
@@ -290,7 +290,7 @@ def register_system(
 ):
     project_id = req.project_id
     if not project_id:
-        existing_projects = store.list_projects(auth.tenant_id)
+        existing_projects = store.list_projects(auth.tenant_id, user_id=auth.user_id, user_email=auth.email)
         if existing_projects:
             project_id = existing_projects[0].project_id
         else:
@@ -298,6 +298,9 @@ def register_system(
                 tenant_id=auth.tenant_id,
                 name="Primary Enterprise Migration Project",
                 description="Default migration project automatically initialized for tenant",
+                owners=[auth.email] if auth.email else [],
+                created_by=auth.user_id,
+                created_by_email=auth.email,
             )
             store.save_project(auth.tenant_id, new_proj)
             project_id = new_proj.project_id

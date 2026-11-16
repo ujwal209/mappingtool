@@ -21,6 +21,7 @@ def get_auth_context(
     tenant = x_tenant_id or "tenant-default"
     user_id = x_user_id or "usr-developer"
     role_str = x_user_role or "Admin"
+    email: Optional[str] = None
 
     if authorization and authorization.startswith("Bearer "):
         token = authorization[7:].strip()
@@ -33,6 +34,17 @@ def get_auth_context(
                 user_id = payload["sub"]
             if payload.get("role"):
                 role_str = payload["role"]
+            if payload.get("email"):
+                email = payload["email"]
+        except Exception:
+            pass
+
+    # If email wasn't in JWT payload or token wasn't provided, try resolving from user store
+    if not email and user_id and user_id not in ("usr-developer", "usr-anonymous"):
+        try:
+            u = store.get_user(user_id)
+            if u and getattr(u, "email", None):
+                email = u.email
         except Exception:
             pass
 
@@ -50,6 +62,7 @@ def get_auth_context(
         user_id=user_id,
         role=role_enum,
         project_id=x_project_id,
+        email=email,
     )
 
 

@@ -105,6 +105,8 @@ class Project(BaseModel):
     name: str
     description: Optional[str] = None
     owners: List[str] = Field(default_factory=list)
+    created_by: Optional[str] = None
+    created_by_email: Optional[str] = None
     lifecycle_state: LifecycleState = LifecycleState.ACTIVE
     domain: Optional[str] = "Banking & Financial Services"
     methodology: Optional[str] = "Phased Wave Replication"

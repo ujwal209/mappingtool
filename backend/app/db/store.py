@@ -371,7 +371,12 @@ class MetadataStore:
                     logger.warning(f"Error parsing project {project_id}: {e}")
             return None
 
-    def list_projects(self, tenant_id: str) -> List[Project]:
+    def list_projects(
+        self,
+        tenant_id: str,
+        user_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+    ) -> List[Project]:
         with self._lock:
             self._init_tenant_buckets(tenant_id)
             if mongo_manager.is_connected:
@@ -387,6 +392,31 @@ class MetadataStore:
                             logger.warning(f"Error parsing project {pid} from mongo: {e}")
             projs = list(self._projects[tenant_id].values())
             projs.sort(key=lambda x: getattr(x, "created_at", 0), reverse=True)
+
+            # Enforce user boundary: only return projects created or owned by this user
+            if user_id or user_email:
+                filtered = []
+                for p in projs:
+                    p_owners = [str(o).lower() for o in (getattr(p, "owners", None) or [])]
+                    p_creator_id = getattr(p, "created_by", None)
+                    p_creator_email = (getattr(p, "created_by_email", None) or "").lower()
+
+                    is_match = False
+                    if user_id and p_creator_id == user_id:
+                        is_match = True
+                    elif user_email:
+                        u_email_lower = user_email.lower()
+                        if p_creator_email and p_creator_email == u_email_lower:
+                            is_match = True
+                        elif u_email_lower in p_owners:
+                            is_match = True
+                    elif user_id and user_id.lower() in p_owners:
+                        is_match = True
+
+                    if is_match:
+                        filtered.append(p)
+                return filtered
+
             return projs
 
     def save_environment(self, tenant_id: str, env: Environment) -> Environment:

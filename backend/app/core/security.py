@@ -35,6 +35,7 @@ class AuthContext(BaseModel):
     user_id: str = Field(default="usr-anonymous", description="Authenticated actor ID")
     role: Role = Field(default=Role.ADMIN, description="Assigned role for RBAC/ABAC")
     project_id: Optional[str] = Field(default=None, description="Current scoped project")
+    email: Optional[str] = Field(default=None, description="Authenticated actor email address")
 
 
 def hash_password(password: str) -> str:
