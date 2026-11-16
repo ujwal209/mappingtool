@@ -193,35 +193,36 @@ class MySQLConnector(BaseConnector):
                 )
                 tables = cur.fetchall()
 
+                # Fetch all columns across all tables in ONE single batch query
+                cur.execute(
+                    """
+                    SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_KEY
+                    FROM information_schema.COLUMNS
+                    WHERE TABLE_SCHEMA = %s
+                    ORDER BY TABLE_NAME, ORDINAL_POSITION
+                    """,
+                    (target_db,),
+                )
+                all_cols = cur.fetchall()
+                cols_by_table: Dict[str, List[Dict[str, Any]]] = {}
+                for c in all_cols:
+                    t_name = c["TABLE_NAME"]
+                    if t_name not in cols_by_table:
+                        cols_by_table[t_name] = []
+                    cols_by_table[t_name].append({
+                        "name": c["COLUMN_NAME"],
+                        "datatype": c["DATA_TYPE"],
+                        "is_pk": c["COLUMN_KEY"] == "PRI",
+                        "nullable": c["IS_NULLABLE"] == "YES",
+                    })
+
                 for tbl in tables:
                     tbl_name = tbl["TABLE_NAME"]
                     row_count = int(tbl["TABLE_ROWS"] or 0)
-
-                    # Fetch columns
-                    cur.execute(
-                        """
-                        SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_KEY
-                        FROM information_schema.COLUMNS
-                        WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s
-                        ORDER BY ORDINAL_POSITION
-                        """,
-                        (target_db, tbl_name),
-                    )
-                    cols = cur.fetchall()
-                    columns = [
-                        {
-                            "name": c["COLUMN_NAME"],
-                            "datatype": c["DATA_TYPE"],
-                            "is_pk": c["COLUMN_KEY"] == "PRI",
-                            "nullable": c["IS_NULLABLE"] == "YES",
-                        }
-                        for c in cols
-                    ]
-
                     out.append({
                         "name": tbl_name,
                         "row_count": row_count,
-                        "columns": columns,
+                        "columns": cols_by_table.get(tbl_name, []),
                     })
         finally:
             conn.close()

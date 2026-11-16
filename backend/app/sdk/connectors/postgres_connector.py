@@ -410,29 +410,91 @@ class PostgresConnector(BaseConnector):
             return [{"name": "id", "datatype": "unknown", "is_pk": True}]
 
     def list_tables(self) -> List[Dict[str, Any]]:
+        conn = self._connect()
+        tables_meta: List[Dict[str, Any]] = []
+
+        # 1. Fast estimated counts and table names via pg_class catalog (instant, no sequential scans)
         try:
-            names = self._table_names()
-        except Exception as e:  # noqa: BLE001
-            logger.warning(
-                f"[Postgres] list_tables failed → {_mask_dsn(self.dsn)} :: {e}"
-            )
-            return []
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT c.relname AS table_name,
+                           GREATEST(0, c.reltuples::bigint) AS estimated_rows
+                    FROM pg_class c
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname = %s AND c.relkind IN ('r', 'p', 'v', 'm')
+                    ORDER BY c.relname
+                    """,
+                    (self.schema,),
+                )
+                tables_meta = cur.fetchall() or []
+        except Exception as e:
+            logger.warning(f"[Postgres] pg_class inspection failed: {e}")
+
+        # Fallback to information_schema.tables if pg_class returned nothing
+        if not tables_meta:
+            try:
+                names = self._table_names()
+                tables_meta = [{"table_name": n, "estimated_rows": 0} for n in names]
+            except Exception as e:
+                logger.warning(f"[Postgres] list_tables failed: {e}")
+                return []
+
+        # 2. Batch column inspection for all tables in a single query
+        cols_by_table: Dict[str, List[Dict[str, Any]]] = {}
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT c.table_name,
+                           c.column_name AS name,
+                           c.data_type AS datatype,
+                           CASE WHEN pk.column_name IS NOT NULL THEN TRUE ELSE FALSE END AS is_pk
+                    FROM information_schema.columns c
+                    LEFT JOIN (
+                        SELECT kcu.table_name, kcu.column_name
+                        FROM information_schema.table_constraints tc
+                        JOIN information_schema.key_column_usage kcu
+                          ON tc.constraint_name = kcu.constraint_name
+                         AND tc.table_schema = kcu.table_schema
+                         AND tc.table_name = kcu.table_name
+                        WHERE tc.constraint_type = 'PRIMARY KEY'
+                          AND tc.table_schema = %s
+                    ) pk ON pk.table_name = c.table_name AND pk.column_name = c.column_name
+                    WHERE c.table_schema = %s
+                    ORDER BY c.table_name, c.ordinal_position
+                    """,
+                    (self.schema, self.schema),
+                )
+                all_cols = cur.fetchall() or []
+                for c in all_cols:
+                    t_name = c["table_name"]
+                    if t_name not in cols_by_table:
+                        cols_by_table[t_name] = []
+                    cols_by_table[t_name].append({
+                        "name": c["name"],
+                        "datatype": c["datatype"],
+                        "is_pk": bool(c["is_pk"]),
+                    })
+        except Exception as e:
+            logger.warning(f"[Postgres] Batch schema query failed, falling back: {e}")
 
         out: List[Dict[str, Any]] = []
-        for name in names:
-            count = self._exact_count(name)
-            cols = self._schema_cache.get(name)
+        for t in tables_meta:
+            name = t["table_name"]
+            row_count = int(t.get("estimated_rows") or 0)
+            cols = cols_by_table.get(name)
             if cols is None:
-                cols = self._full_schema(name)
-                self._schema_cache[name] = cols
-            out.append(
-                {
-                    "name": name,
-                    "row_count": count,
-                    "exact_count": count,
-                    "columns": cols,
-                }
-            )
+                cols = self._schema_cache.get(name)
+                if cols is None:
+                    cols = [{"name": "id", "datatype": "unknown", "is_pk": True}]
+            out.append({
+                "name": name,
+                "row_count": row_count,
+                "exact_count": row_count,
+                "columns": cols,
+            })
+
         return out
 
     # ═══════════════════════════════════════════════════════════

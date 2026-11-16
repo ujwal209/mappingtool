@@ -188,14 +188,17 @@ def test_pre_connect(
     except Exception:  # noqa: BLE001
         tables = []
 
-    SAMPLE_LIMIT = 1000
+    SAMPLE_LIMIT = 5
+    SAMPLE_TABLES_MAX = 3
 
-    for t in tables[:50]:
+    for idx, t in enumerate(tables[:100]):
         name = t.get("name", "table")
-        try:
-            sample_rows = connector.read_table(name, limit=SAMPLE_LIMIT)
-        except Exception:  # noqa: BLE001
-            sample_rows = []
+        sample_rows = []
+        if idx < SAMPLE_TABLES_MAX:
+            try:
+                sample_rows = connector.read_table(name, limit=SAMPLE_LIMIT)
+            except Exception:  # noqa: BLE001
+                sample_rows = []
         discovered.append(
             DiscoveredTableItem(
                 name=name,

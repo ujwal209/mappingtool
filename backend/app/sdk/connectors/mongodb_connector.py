@@ -363,13 +363,12 @@ class MongoDBAtlasConnector(BaseConnector):
     # Counts — reliable, not the flaky estimate
     # ---------------------------------------------------------
     def _exact_count(self, coll) -> int:
-        """Use count_documents({}) — reliable across Atlas tiers.
-        Fall back to estimated_document_count only if it errors."""
+        """Fast metadata document count (instant in serverless, no full collection scan)."""
         try:
-            return int(coll.count_documents({}, maxTimeMS=self.timeout_ms * 4))
+            return int(coll.estimated_document_count())
         except Exception:
             try:
-                return int(coll.estimated_document_count())
+                return int(coll.count_documents({}, maxTimeMS=1500))
             except Exception:
                 return 0
 
