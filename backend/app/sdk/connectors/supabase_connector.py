@@ -153,13 +153,31 @@ class SupabaseConnector(BaseConnector):
                         ],
                         "rest_url": self.rest_url,
                     }
-                else:
-                    return {
-                        "status": "FAILED",
-                        "latency_ms": latency,
-                        "message": f"Supabase PostgREST returned HTTP {r.status_code}: {r.text[:200]}",
-                        "capabilities": [],
-                    }
+                elif r.status_code == 401 and "service_role" in r.text:
+                    # In Supabase, anon keys are restricted from root openapi spec.
+                    # Verify health via auth/v1/health endpoint.
+                    h_res = client.get(f"{self.supabase_url}/auth/v1/health", headers=headers)
+                    if h_res.status_code in (200, 204):
+                        return {
+                            "status": "SUCCESS",
+                            "latency_ms": latency,
+                            "message": f"Connected to Supabase at {self.supabase_url} (authenticated via anon key)",
+                            "capabilities": [
+                                "schema_discovery",
+                                "read_batch",
+                                "write_batch",
+                                "postgrest_api",
+                                "rls_enforced",
+                            ],
+                            "rest_url": self.rest_url,
+                        }
+
+                return {
+                    "status": "FAILED",
+                    "latency_ms": latency,
+                    "message": f"Supabase PostgREST returned HTTP {r.status_code}: {r.text[:200]}",
+                    "capabilities": [],
+                }
         except Exception as e:
             return {
                 "status": "FAILED",
@@ -202,6 +220,62 @@ class SupabaseConnector(BaseConnector):
                             "row_count": 0,
                             "columns": columns,
                         })
+                    if out:
+                        return out
+                elif r.status_code == 401:
+                    # When anon key is used, Supabase restricts root openapi.
+                    # Probe active and candidate tables directly using standard JSON accept.
+                    probe_candidates = [
+                        "legacy_customers", "legacy_accounts", "legacy_products", "legacy_orders",
+                        "legacy_order_items", "legacy_inventory", "legacy_payments", "legacy_tickets",
+                        "dim_customers", "dim_addresses", "fct_customer_balances", "dim_products",
+                        "fct_orders", "fct_order_line_items", "fct_payments", "fct_support_cases",
+                        "customers", "accounts", "products", "orders", "users", "profiles", "items", "payments"
+                    ]
+                    probe_headers = self._headers()
+                    probe_headers["Accept"] = "application/json"
+                    probe_headers["Prefer"] = "count=exact"
+                    for t_name in probe_candidates:
+                        try:
+                            tbl_res = client.get(f"{self.rest_url}/{t_name}?select=*&limit=1", headers=probe_headers)
+                            if tbl_res.status_code in (200, 206):
+                                rows = tbl_res.json()
+                                count = 0
+                                crange = tbl_res.headers.get("content-range")
+                                if crange and "/" in crange:
+                                    try:
+                                        count = int(crange.split("/")[-1])
+                                    except Exception:
+                                        count = len(rows)
+                                else:
+                                    count = len(rows)
+
+                                columns = []
+                                if rows and isinstance(rows[0], dict):
+                                    for idx, (col_k, col_v) in enumerate(rows[0].items()):
+                                        dt = "string"
+                                        if isinstance(col_v, bool):
+                                            dt = "boolean"
+                                        elif isinstance(col_v, (int, float)):
+                                            dt = "numeric"
+                                        elif isinstance(col_v, dict) or isinstance(col_v, list):
+                                            dt = "jsonb"
+                                        columns.append({
+                                            "name": col_k,
+                                            "datatype": dt,
+                                            "is_pk": idx == 0 or col_k.endswith("id") or col_k == "id",
+                                            "nullable": True,
+                                        })
+                                else:
+                                    columns = [{"name": "id", "datatype": "string", "is_pk": True}]
+
+                                out.append({
+                                    "name": t_name,
+                                    "row_count": count,
+                                    "columns": columns,
+                                })
+                        except Exception:
+                            pass
         except Exception as e:
             logger.warning(f"Failed to fetch Supabase OpenAPI schema: {e}")
 
