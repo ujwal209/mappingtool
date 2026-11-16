@@ -13,15 +13,26 @@ const API_BASE = API_V1;
 function getAuthToken(): string | null {
   if (typeof window === "undefined") return null;
   return (
+    localStorage.getItem("auth_token") ||
     localStorage.getItem("access_token") ||
     localStorage.getItem("token") ||
+    sessionStorage.getItem("auth_token") ||
     sessionStorage.getItem("access_token")
   );
 }
 
+function getTenantId(): string {
+  if (typeof window === "undefined") return "tenant-default";
+  return localStorage.getItem("tenant_id") || "tenant-default";
+}
+
 function authHeaders(extra?: Record<string, string>): Record<string, string> {
   const token = getAuthToken();
-  const base: Record<string, string> = { ...(extra ?? {}) };
+  const tenant = getTenantId();
+  const base: Record<string, string> = {
+    "X-Tenant-Id": tenant,
+    ...(extra ?? {}),
+  };
   if (token) base.Authorization = `Bearer ${token}`;
   return base;
 }

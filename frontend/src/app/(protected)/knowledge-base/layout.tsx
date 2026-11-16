@@ -14,6 +14,7 @@ import { ProtectedRoute } from "@/components/protected-route";
 import { ProjectGuard } from "@/components/ProjectGuard";
 import { OntologyPicker } from "@/components/kb/OntologyPicker";
 import { KBOntology, listOntologies } from "@/lib/kb-api";
+import { useProject } from "@/context/ProjectContext";
 
 interface KnowledgeBaseContextValue {
   ontologies: KBOntology[];
@@ -49,6 +50,7 @@ export default function KnowledgeBaseLayout({
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
+  const { activeProjectId } = useProject();
 
   const [ontologies, setOntologies] = useState<KBOntology[]>([]);
   const [selectedOntId, setSelectedOntIdState] = useState<string>(
@@ -59,24 +61,31 @@ export default function KnowledgeBaseLayout({
   const refreshOntologies = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await listOntologies().catch(() => [] as KBOntology[]);
+      const list = await listOntologies(activeProjectId || undefined).catch(
+        () => [] as KBOntology[]
+      );
       setOntologies(list);
-      if (list.length > 0 && !selectedOntId) {
-        const first = list[0].ontology_version_id;
-        setSelectedOntIdState(first);
-        const sp = new URLSearchParams(Array.from(params.entries()));
-        sp.set("ontology_id", first);
-        router.replace(`${pathname}?${sp.toString()}`);
+      if (list.length > 0) {
+        const hasMatch = list.some((o) => o.ontology_version_id === selectedOntId);
+        if (!hasMatch) {
+          const first = list[0].ontology_version_id;
+          setSelectedOntIdState(first);
+          const sp = new URLSearchParams(Array.from(params.entries()));
+          sp.set("ontology_id", first);
+          router.replace(`${pathname}?${sp.toString()}`);
+        }
+      } else {
+        setSelectedOntIdState("");
       }
     } finally {
       setLoading(false);
     }
-  }, [pathname, params, router, selectedOntId]);
+  }, [pathname, params, router, selectedOntId, activeProjectId]);
 
   useEffect(() => {
     refreshOntologies();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [activeProjectId]);
 
   const setSelectedOntId = (id: string) => {
     setSelectedOntIdState(id);

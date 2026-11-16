@@ -194,6 +194,12 @@ def list_ontology_documents(
     auth: AuthContext = Depends(get_auth_context),
 ):
     """**List all ingested documents, compliance rulebooks, and glossaries attached to this ontology version.**"""
+    ont = store.get_ontology(auth.tenant_id, ontology_version_id)
+    if ont and ont.project_id and ont.project_id != "proj-default":
+        from app.services.project_service import project_service
+        if not project_service.can_user_access_project_id(auth.tenant_id, ont.project_id, auth.user_id, auth.email):
+            return []
+
     from app.services.ontology_rag_service import ontology_rag_service
     return ontology_rag_service.list_documents(auth.tenant_id, ontology_version_id)
 

@@ -58,8 +58,33 @@ def list_ontologies(
     project_id: Optional[str] = Query(default=None),
     auth: AuthContext = Depends(get_auth_context),
 ):
-    """**Retrieve all ontology versions** for the authenticated tenant."""
-    return store.list_ontologies(auth.tenant_id, project_id)
+    """**Retrieve all ontology versions** for the authenticated user and project."""
+    from app.services.project_service import project_service
+
+    # If unauthenticated, return empty list
+    if not auth.email and (not auth.user_id or auth.user_id in ("usr-anonymous", "usr-developer")):
+        return []
+
+    # Get caller's authorized projects
+    user_projects = project_service.list_projects(
+        auth.tenant_id,
+        user_id=auth.user_id,
+        user_email=auth.email,
+    )
+    user_project_ids = {p.project_id for p in user_projects}
+
+    # If caller specifies a project_id, verify access
+    if project_id:
+        if project_id not in user_project_ids:
+            return []
+        return store.list_ontologies(auth.tenant_id, project_id=project_id)
+
+    # If no project_id specified, only return ontologies belonging to the caller's projects
+    if not user_project_ids:
+        return []
+
+    all_ontologies = store.list_ontologies(auth.tenant_id)
+    return [o for o in all_ontologies if o.project_id in user_project_ids]
 
 
 @router.post(
@@ -75,7 +100,29 @@ def create_ontology(
     auth: AuthContext = Depends(get_auth_context),
 ):
     """**Create a new draft ontology version** (persisted to MongoDB 'ontologies')."""
-    target_project = project_id or req.project_id or "proj-default"
+    from app.services.project_service import project_service
+
+    target_project = project_id or req.project_id
+    if not target_project or target_project == "proj-default":
+        user_projects = project_service.list_projects(
+            auth.tenant_id,
+            user_id=auth.user_id,
+            user_email=auth.email,
+        )
+        if user_projects:
+            target_project = user_projects[0].project_id
+        else:
+            target_project = "proj-default"
+
+    if target_project != "proj-default":
+        if not project_service.can_user_access_project_id(auth.tenant_id, target_project, auth.user_id, auth.email):
+            raise PlatformException(
+                code="ACCESS_DENIED",
+                message="You do not have permission to add ontologies to this project.",
+                category=ErrorCategory.ACCESS_DENIED,
+                status_code=403,
+            )
+
     return ontology_service.create_version(
         tenant_id=auth.tenant_id,
         project_id=target_project,
@@ -135,6 +182,15 @@ def get_ontology_version(
             message="Ontology version not found",
             status_code=404,
         )
+    if ont.project_id and ont.project_id != "proj-default":
+        from app.services.project_service import project_service
+        if not project_service.can_user_access_project_id(auth.tenant_id, ont.project_id, auth.user_id, auth.email):
+            raise PlatformException(
+                code="ACCESS_DENIED",
+                message="You do not have permission to access this ontology.",
+                category=ErrorCategory.ACCESS_DENIED,
+                status_code=403,
+            )
     return ont
 
 
@@ -614,6 +670,12 @@ def list_ontology_documents(
     auth: AuthContext = Depends(get_auth_context),
 ):
     """**List all ingested documents, compliance rulebooks, and glossaries attached to this ontology version.**"""
+    ont = store.get_ontology(auth.tenant_id, ontology_version_id)
+    if ont and ont.project_id and ont.project_id != "proj-default":
+        from app.services.project_service import project_service
+        if not project_service.can_user_access_project_id(auth.tenant_id, ont.project_id, auth.user_id, auth.email):
+            return []
+
     from app.services.ontology_rag_service import ontology_rag_service
     return ontology_rag_service.list_documents(auth.tenant_id, ontology_version_id)
 

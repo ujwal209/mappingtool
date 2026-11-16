@@ -107,6 +107,21 @@ class ProjectService:
 
         return False
 
+    def can_user_access_project_id(
+        self,
+        tenant_id: str,
+        project_id: str,
+        user_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+    ) -> bool:
+        """Checks if a user can access a project given its ID."""
+        if not project_id or project_id == "proj-default":
+            return False
+        proj = store.get_project(tenant_id, project_id)
+        if not proj:
+            return False
+        return self.can_user_access_project(proj, user_id, user_email)
+
     def get_project(self, tenant_id: str, project_id: str) -> Project:
         proj = store.get_project(tenant_id, project_id)
         if not proj:
