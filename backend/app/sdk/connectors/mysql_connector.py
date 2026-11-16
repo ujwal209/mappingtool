@@ -9,6 +9,8 @@ Connects to MySQL / MariaDB instances (Localhost, XAMPP, Docker, AWS RDS, Planet
 
 from __future__ import annotations
 
+import os
+import ssl
 import time
 from typing import Any, Dict, Iterator, List, Optional
 from urllib.parse import parse_qsl, quote_plus, urlparse
@@ -113,9 +115,27 @@ class MySQLConnector(BaseConnector):
             raise RuntimeError("pymysql is not installed. Run: uv add pymysql cryptography")
 
         host = host_override or self.host
-        ssl_kwargs = {}
-        if self.ssl_required and host not in ("localhost", "127.0.0.1", "::1"):
-            ssl_kwargs["ssl"] = {"ssl_mode": "REQUIRED"}
+
+        # Guard: Helpful error when running in cloud (e.g. Vercel) and user enters 127.0.0.1/localhost
+        is_cloud_env = bool(os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME") or os.getenv("RENDER"))
+        if is_cloud_env and host in ("localhost", "127.0.0.1", "::1"):
+            raise ConnectionError(
+                f"Cannot connect to local MySQL host '{host}' from cloud deployment (Vercel/Render). "
+                f"Cloud lambdas run in isolated containers and cannot reach your private laptop or network. "
+                f"Please provide a public cloud MySQL connection (e.g. Aiven, PlanetScale, Railway, Supabase) "
+                f"or tunnel your local database with ngrok: 'ngrok tcp 3306'."
+            )
+
+        ssl_kwargs: Dict[str, Any] = {}
+        # For cloud MySQL or if SSL requested, create an SSLContext
+        if self.ssl_required or (host not in ("localhost", "127.0.0.1", "::1")):
+            try:
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                ssl_kwargs["ssl"] = ctx
+            except Exception as e:
+                logger.warning(f"[MySQLConnector] Failed to create SSL context: {e}")
 
         try:
             return pymysql.connect(
@@ -130,8 +150,24 @@ class MySQLConnector(BaseConnector):
                 **ssl_kwargs,
             )
         except Exception as e:
-            # On Windows, 'localhost' often resolves to IPv6 '::1' while MySQL listens on IPv4 '127.0.0.1'.
-            # If localhost fails, automatically attempt 127.0.0.1 fallback for local databases.
+            # If SSL connection failed on remote host, retry once without SSL
+            if "ssl" in ssl_kwargs and not self.ssl_required:
+                try:
+                    logger.info("[MySQLConnector] Retrying remote connection without explicit SSL context...")
+                    return pymysql.connect(
+                        host=host,
+                        port=self.port,
+                        user=self.user,
+                        password=self.password,
+                        database=self.database or None,
+                        connect_timeout=self.connect_timeout,
+                        cursorclass=pymysql.cursors.DictCursor,
+                        autocommit=True,
+                    )
+                except Exception:
+                    pass
+
+            # Fallback for localhost -> 127.0.0.1 on Windows
             if host.lower() == "localhost" and not host_override:
                 logger.info("Retrying local MySQL connection with 127.0.0.1...")
                 try:
@@ -334,6 +370,95 @@ class MySQLConnector(BaseConnector):
         finally:
             conn.close()
 
+    def _exact_count(self, table: str) -> int:
+        """Returns exact count of rows in the given table."""
+        clean_tbl = table.replace("`", "").strip()
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                if "." in clean_tbl:
+                    db_p, tbl_p = clean_tbl.split(".", 1)
+                    sql = f"SELECT COUNT(*) AS cnt FROM `{db_p}`.`{tbl_p}`"
+                else:
+                    sql = f"SELECT COUNT(*) AS cnt FROM `{clean_tbl}`"
+                cur.execute(sql)
+                res = cur.fetchone() or {}
+                return int(res.get("cnt") or 0)
+        except Exception as e:
+            logger.warning(f"[MySQLConnector] Exact count failed for '{table}': {e}")
+            return 0
+        finally:
+            conn.close()
+
+    def estimate(self, scope: Dict[str, Any]) -> Dict[str, Any]:
+        """Returns row count and size estimate for a table scope."""
+        table = scope.get("dataset_name") or scope.get("table") or ""
+        cnt = self._exact_count(table) if table else 0
+        return {
+            "row_count": cnt,
+            "byte_size": cnt * 250,
+            "partition_count": max(1, (cnt + 499) // 500),
+        }
+
+    def plan_extract(
+        self,
+        scope: Dict[str, Any],
+        checkpoint: Optional[Dict[str, Any]] = None,
+    ) -> List[PartitionInfo]:
+        """Creates extraction partition plan for the table."""
+        table = scope.get("dataset_name") or scope.get("table") or "default"
+        total = self._exact_count(table)
+        batch = int(scope.get("batch_size") or 500)
+        batch = max(1, min(batch, 50_000))
+
+        start = 0
+        if checkpoint and "last_index" in checkpoint:
+            start = int(checkpoint["last_index"])
+
+        if total == 0:
+            return [
+                PartitionInfo(
+                    partition_id=f"{table}_part_0",
+                    dataset_name=table,
+                    lower_bound=0,
+                    upper_bound=0,
+                    row_count_estimate=0,
+                    token="0",
+                )
+            ]
+
+        partitions: List[PartitionInfo] = []
+        for i in range(start, total, batch):
+            partitions.append(
+                PartitionInfo(
+                    partition_id=f"{table}_part_{i // batch}",
+                    dataset_name=table,
+                    lower_bound=i,
+                    upper_bound=min(i + batch, total),
+                    row_count_estimate=min(batch, total - i),
+                    token=str(i),
+                )
+            )
+        return partitions
+
+    def read_partition(
+        self,
+        partition: PartitionInfo,
+        checkpoint: Optional[Dict[str, Any]] = None,
+    ) -> Iterator[Dict[str, Any]]:
+        """Yields records for a given partition."""
+        start = partition.lower_bound or 0
+        limit = max(
+            1, (partition.upper_bound or (start + 500)) - start
+        )
+        rows = self.read_rows(
+            table=partition.dataset_name,
+            offset=start,
+            limit=limit,
+        )
+        for r in rows:
+            yield r
+
     def write_records(
         self,
         table: str,
@@ -354,12 +479,67 @@ class MySQLConnector(BaseConnector):
                 if mode == "replace":
                     cur.execute(f"TRUNCATE TABLE {tbl_expr}")
 
-                cols = list(records[0].keys())
+                # Introspect target table valid columns and nullability
+                if "." in clean_tbl:
+                    db_p, tbl_p = clean_tbl.split(".", 1)
+                    cur.execute(
+                        "SELECT COLUMN_NAME, IS_NULLABLE, COLUMN_DEFAULT, DATA_TYPE, EXTRA "
+                        "FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s",
+                        (db_p, tbl_p),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT COLUMN_NAME, IS_NULLABLE, COLUMN_DEFAULT, DATA_TYPE, EXTRA "
+                        "FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s",
+                        (clean_tbl,),
+                    )
+                col_meta = cur.fetchall()
+                valid_cols = {r["COLUMN_NAME"] for r in col_meta}
+
+                # Identify provided columns that exist in the target table
+                provided_cols = [c for c in records[0].keys() if c in valid_cols] if valid_cols else list(records[0].keys())
+
+                # Identify required (NOT NULL) target columns that are missing from provided records
+                missing_required: Dict[str, Any] = {}
+                for m in col_meta:
+                    c_name = m["COLUMN_NAME"]
+                    is_null = m["IS_NULLABLE"] == "YES"
+                    has_default = m["COLUMN_DEFAULT"] is not None
+                    is_auto = "auto_increment" in (m.get("EXTRA") or "").lower()
+                    if not is_null and not has_default and not is_auto and c_name not in provided_cols:
+                        dt = (m.get("DATA_TYPE") or "").lower()
+                        if dt in ("int", "bigint", "tinyint", "smallint", "mediumint", "decimal", "float", "double"):
+                            missing_required[c_name] = 0
+                        elif dt in ("datetime", "timestamp"):
+                            missing_required[c_name] = "1970-01-01 00:00:00"
+                        elif dt == "date":
+                            missing_required[c_name] = "1970-01-01"
+                        elif dt in ("bit", "boolean"):
+                            missing_required[c_name] = 0
+                        else:
+                            missing_required[c_name] = ""
+
+                cols = provided_cols + list(missing_required.keys())
+                if not cols:
+                    logger.warning(f"[MySQLConnector] No valid target columns matched for {clean_tbl}")
+                    return {"table": table, "inserted": 0, "updated": 0, "total": 0}
+
                 col_names = ", ".join(f"`{c}`" for c in cols)
                 placeholders = ", ".join(["%s"] * len(cols))
                 sql = f"INSERT INTO {tbl_expr} ({col_names}) VALUES ({placeholders})"
 
-                batch = [[r.get(c) for c in cols] for r in records]
+                batch = []
+                for r in records:
+                    row_vals = []
+                    for c in cols:
+                        if c in r and r.get(c) is not None:
+                            row_vals.append(r.get(c))
+                        elif c in missing_required:
+                            row_vals.append(missing_required[c])
+                        else:
+                            row_vals.append(None)
+                    batch.append(row_vals)
+
                 cur.executemany(sql, batch)
                 inserted = len(records)
         finally:
@@ -371,6 +551,37 @@ class MySQLConnector(BaseConnector):
             "updated": 0,
             "total": inserted,
         }
+
+    def write_batch(
+        self,
+        records: List[Dict[str, Any]],
+        idempotency_context: Dict[str, Any],
+    ) -> WriteBatchResult:
+        """Writes a batch of records conforming to BaseConnector."""
+        table = (
+            idempotency_context.get("target_dataset")
+            or idempotency_context.get("table")
+            or "default"
+        )
+        mode = (idempotency_context.get("mode") or "append").lower()
+        if mode not in ("append", "replace"):
+            mode = "append"
+        res = self.write_records(table, records, mode=mode)
+        inserted = int(res.get("inserted") or len(records))
+        return WriteBatchResult(
+            accepted_records=inserted,
+            rejected_records=int(res.get("failed") or 0),
+            target_ids=[],
+            rejection_reasons=[],
+        )
+
+    def begin_snapshot(self, operation_ref: str) -> None:
+        """Best-effort snapshot hook."""
+        pass
+
+    def compensate(self, operation_ref: str) -> bool:
+        """Rollback snapshot hook."""
+        return True
 
     def discover(self) -> List[Dict[str, Any]]:
         """Generates canonical dataset representations for all tables."""

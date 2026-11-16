@@ -846,6 +846,32 @@ class MigrationService:
                     )
                     total_for_table += transformed_count
 
+            # Fallback if partitions yielded 0 rows
+            if total_for_table == 0 and hasattr(src_conn, "read_table"):
+                try:
+                    fallback_rows = src_conn.read_table(cfg.source_table, limit=BATCH_SIZE)
+                    if fallback_rows:
+                        logger.info(
+                            f"[MigrationService] Fallback read_table extracted {len(fallback_rows)} rows for {cfg.source_table}"
+                        )
+                        _, transformed_count = self._transform_validate_spool_batch(
+                            tenant_id=tenant_id,
+                            run=run,
+                            cfg=cfg,
+                            rule_pkg=rule_pkg,
+                            validation_rules=validation_rules,
+                            src_sys=src_sys,
+                            tgt_sys=tgt_sys,
+                            raw_batch=fallback_rows,
+                            spool_file=spool_file,
+                            preview_cache=preview_cache,
+                        )
+                        total_for_table += transformed_count
+                except Exception as fb_err:
+                    logger.warning(
+                        f"[MigrationService] read_table fallback failed for {cfg.source_table}: {fb_err}"
+                    )
+
             spool_file.close()
 
             store._migration_conn_cache[run.run_id]["transformed"][
@@ -1519,23 +1545,38 @@ class MigrationService:
         )
 
         transforms: Dict[str, Dict[str, Any]] = {}
-        for c in pair.columns:
-            if not c.matched_source_column:
+        # 1. From pair.columns (explicit column mappings)
+        for c in (getattr(pair, "columns", None) or []):
+            if not getattr(c, "matched_source_column", None):
                 continue
             transforms[c.target_column] = {
-                "op": c.transformation_rule or "direct_cast",
+                "op": getattr(c, "transformation_rule", None) or "direct_cast",
                 "source_cols": [c.matched_source_column],
-                "default": c.default_value,
-                "target_type": c.target_datatype or "string",
+                "default": getattr(c, "default_value", None),
+                "target_type": getattr(c, "target_datatype", None) or "string",
             }
+
+        # 2. Fallback: Seed from table-matching matched_columns if columns were not individually reviewed
+        if not transforms:
+            matched_cols = getattr(pair, "matched_columns", None) or []
+            for mc in matched_cols:
+                src_c = mc.get("source_col") if isinstance(mc, dict) else getattr(mc, "source_col", None)
+                tgt_c = mc.get("target_col") if isinstance(mc, dict) else getattr(mc, "target_col", None)
+                if src_c and tgt_c:
+                    transforms[tgt_c] = {
+                        "op": "direct_cast",
+                        "source_cols": [src_c],
+                        "default": "",
+                        "target_type": "string",
+                    }
 
         return RulePackageVersion(
             project_id=pair.target_table,
             semantic_version="1.0.0",
             status=ArtifactStatus.APPROVED,
             compiled_plan={
-                "source_dataset_id": pair.source_dataset_id,
-                "target_dataset_id": pair.target_dataset_id,
+                "source_dataset_id": getattr(pair, "source_dataset_id", ""),
+                "target_dataset_id": getattr(pair, "target_dataset_id", ""),
                 "transforms": transforms,
             },
             validations=[],

@@ -42,20 +42,24 @@ class TransformWorker:
             target_record: Dict[str, Any] = {}
             lineage_ops: List[Dict[str, Any]] = []
 
-            for target_col, rule_spec in transforms.items():
-                rule_output = evaluate_transformation_rule(
-                    rule_spec=rule_spec,
-                    source_record=src_rec,
-                    manifest_constants=manifest_constants
-                )
-                target_record[target_col] = rule_output.value
-                
-                lineage_ops.append({
-                    "target_column": target_col,
-                    "applied_op": rule_output.applied_op,
-                    "status": rule_output.status.value,
-                    "source_columns": rule_spec.get("source_cols", []),
-                })
+            if not transforms:
+                # Direct passthrough if no column rules configured
+                target_record = dict(src_rec)
+            else:
+                for target_col, rule_spec in transforms.items():
+                    rule_output = evaluate_transformation_rule(
+                        rule_spec=rule_spec,
+                        source_record=src_rec,
+                        manifest_constants=manifest_constants
+                    )
+                    target_record[target_col] = rule_output.value
+                    
+                    lineage_ops.append({
+                        "target_column": target_col,
+                        "applied_op": rule_output.applied_op,
+                        "status": rule_output.status.value,
+                        "source_columns": rule_spec.get("source_cols", []),
+                    })
 
             transformed_records.append(target_record)
 
