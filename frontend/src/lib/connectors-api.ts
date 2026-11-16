@@ -286,18 +286,31 @@ export function getConnectorFields(type: string): ConnectorField[] {
     return [
       {
         key: "dsn",
-        label: "Supabase Connection Pooler URI (IPv4 Compatible)",
+        label: "Option 1: Connection Pooler URI (Recommended)",
         type: "password",
-        required: true,
         placeholder: "postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres",
-        help: "In Supabase: Project Settings -> Database -> Connection string -> select 'Connection Pooler' (Session or Transaction mode, port 6543). Direct connection to db.xxx:5432 requires IPv6 and will time out on IPv4 networks.",
+        help: "From Supabase: click 'Connect' at top -> select 'Connection pooler' tab -> copy URI. Do NOT use 'Direct' because Supabase direct connections only work on IPv6 networks.",
+      },
+      {
+        key: "supabase_url",
+        label: "Option 2: Project URL (HTTPS - 100% IPv4 Compatible)",
+        type: "url",
+        placeholder: "https://advfzgaipzwvtbmgcldj.supabase.co",
+        help: "Your Supabase project URL (Project Settings -> API). Connects over HTTPS port 443 with zero network/port issues.",
+      },
+      {
+        key: "api_key",
+        label: "Option 2: API Key (anon or service_role)",
+        type: "password",
+        placeholder: "eyJhbGciOi...",
+        help: "Your project's anon public or service_role secret key from Project Settings -> API.",
       },
       {
         key: "schema",
         label: "Schema",
         type: "text",
         placeholder: "public",
-        help: "Schema namespace. Default: public.",
+        help: "Default: public.",
       },
     ];
   }
