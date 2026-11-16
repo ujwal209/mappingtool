@@ -82,6 +82,45 @@ export function TechIcon({
     );
   }
 
+  // MySQL / MariaDB
+  if (norm.includes("mysql") || norm.includes("mariadb")) {
+    return (
+      <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="24" height="24" rx="4" fill="#00758F" />
+        <path
+          d="M6 14C8 10 14 8 18 10C17 13 14 15 11 15C9 15 7.5 16 6 17V14Z"
+          fill="#F29111"
+        />
+        <circle cx="16" cy="11" r="1.5" fill="#FFFFFF" />
+      </svg>
+    );
+  }
+
+  // Supabase
+  if (norm.includes("supabase")) {
+    return (
+      <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="24" height="24" rx="4" fill="#1C1C1C" />
+        <path
+          d="M13.5 3.5L4.5 14.5H11.5L10.5 20.5L19.5 9.5H12.5L13.5 3.5Z"
+          fill="#3ECF8E"
+        />
+      </svg>
+    );
+  }
+
+  // SQLite / Relational
+  if (norm.includes("sqlite") || norm.includes("relational")) {
+    return (
+      <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="24" height="24" rx="4" fill="#003B57" />
+        <ellipse cx="12" cy="7" rx="6" ry="2.5" fill="#00ADEF" />
+        <path d="M6 7V17C6 18.4 8.7 19.5 12 19.5C15.3 19.5 18 18.4 18 17V7" stroke="#FFFFFF" strokeWidth="1.8" />
+        <path d="M6 12C6 13.4 8.7 14.5 12 14.5C15.3 14.5 18 13.4 18 12" stroke="#FFFFFF" strokeWidth="1.8" />
+      </svg>
+    );
+  }
+
   // Microsoft SQL Server / Azure SQL
   if (norm.includes("sqlserver") || norm.includes("mssql")) {
     return (

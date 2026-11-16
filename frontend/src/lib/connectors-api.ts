@@ -235,6 +235,99 @@ export function getConnectorFields(type: string): ConnectorField[] {
     ];
   }
 
+  // ── MySQL & MariaDB ────────────────────────────────────
+  if (t === "mysql" || t === "mariadb") {
+    return [
+      {
+        key: "dsn",
+        label: "Connection URI (or use discrete fields below)",
+        type: "password",
+        placeholder: "mysql://root:password@localhost:3306/my_database",
+        help: "Full MySQL URI. Localhost example: mysql://root:password@localhost:3306/mydb. Cloud RDS example: mysql://user:pass@rds-host:3306/mydb?ssl=require",
+      },
+      {
+        key: "host",
+        label: "Host",
+        type: "text",
+        placeholder: "localhost",
+        help: "Database host. Use 'localhost' or '127.0.0.1' for local database.",
+      },
+      {
+        key: "port",
+        label: "Port",
+        type: "number",
+        placeholder: "3306",
+        help: "Default 3306 for MySQL/MariaDB.",
+      },
+      {
+        key: "user",
+        label: "User",
+        type: "text",
+        placeholder: "root",
+      },
+      {
+        key: "password",
+        label: "Password",
+        type: "password",
+        placeholder: "••••••••",
+      },
+      {
+        key: "database",
+        label: "Database name",
+        type: "text",
+        placeholder: "my_database",
+        help: "The database/schema containing your tables.",
+      },
+    ];
+  }
+
+  // ── Supabase (Wire & PostgREST API) ─────────────────────
+  if (t === "supabase" || t === "supabase_db") {
+    return [
+      {
+        key: "dsn",
+        label: "PostgreSQL Connection URI (Direct DB / Pooler)",
+        type: "password",
+        placeholder: "postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres",
+        help: "Direct Supabase database connection string (from Supabase Dashboard -> Project Settings -> Database). Local Supabase: postgresql://postgres:postgres@localhost:54322/postgres.",
+      },
+      {
+        key: "supabase_url",
+        label: "Supabase Project URL (REST PostgREST API)",
+        type: "url",
+        placeholder: "https://[project-ref].supabase.co",
+        help: "Your Supabase project URL (or http://localhost:54321 for local Supabase CLI).",
+      },
+      {
+        key: "api_key",
+        label: "API Key / Service Role Key",
+        type: "password",
+        placeholder: "eyJhbGciOi...",
+        help: "anon key or service_role key for authenticated REST access.",
+      },
+      {
+        key: "schema",
+        label: "Schema",
+        type: "text",
+        placeholder: "public",
+        help: "Schema namespace. Default: public.",
+      },
+    ];
+  }
+
+  // ── SQLite / Local Relational DB ────────────────────────
+  if (t === "relational" || t === "sqlite" || t === "sqlite3") {
+    return [
+      {
+        key: "database_path",
+        label: "SQLite Database File Path",
+        type: "text",
+        placeholder: "./local.db or D:/data/mydb.sqlite",
+        help: "Local SQLite file path on host. Leave blank or use ':memory:' for an ephemeral in-memory database.",
+      },
+    ];
+  }
+
   // ── Fabric ──────────────────────────────────────────────
   if (t === "fabric" || t === "microsoft_fabric" || t === "onelake") {
     return [
@@ -257,6 +350,18 @@ export function getConnectorFields(type: string): ConnectorField[] {
         label: "Azure tenant ID",
         type: "text",
         placeholder: "common",
+      },
+      {
+        key: "client_id",
+        label: "Client ID (App ID)",
+        type: "text",
+        placeholder: "Optional for live Azure AD OAuth",
+      },
+      {
+        key: "client_secret",
+        label: "Client Secret",
+        type: "password",
+        placeholder: "Optional Azure AD client secret",
       },
     ];
   }
@@ -288,10 +393,22 @@ export function getConnectorFields(type: string): ConnectorField[] {
         type: "text",
         placeholder: "d365-client-app",
       },
+      {
+        key: "client_secret",
+        label: "Client Secret",
+        type: "password",
+        placeholder: "Optional Azure AD client secret",
+      },
+      {
+        key: "tenant_id",
+        label: "Azure Tenant ID",
+        type: "text",
+        placeholder: "common",
+      },
     ];
   }
 
-  // ── Memory / sheet / relational / unknown → no fields ──
+  // ── Memory / sheet / unknown → no fields ──
   return [];
 }
 

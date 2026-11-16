@@ -12,6 +12,8 @@ Fulfills requirements from:
 import copy
 import time
 from typing import Any, Dict, Iterator, List, Optional
+import httpx
+
 from app.sdk.connectors.base import (
     BaseConnector,
     ConnectorCapabilities,
@@ -31,16 +33,32 @@ class Dynamics365Connector(BaseConnector):
     def __init__(self, endpoint_config: Dict[str, Any], secret_ref: Optional[str] = None):
         super().__init__(endpoint_config, secret_ref)
         self.version = "2.0.0"
-        self.environment_url = endpoint_config.get("environment_url", "https://contoso.crm.dynamics.com")
-        self.api_version = endpoint_config.get("api_version", "v9.2")
-        self.client_id = endpoint_config.get("client_id", "d365-client-app")
+        cfg = self.config or {}
+        raw_env = cfg.get("environment_url") or cfg.get("url") or "https://contoso.crm.dynamics.com"
+        self.environment_url = raw_env.rstrip("/")
+        self.api_version = cfg.get("api_version", "v9.2")
+        self.client_id = cfg.get("client_id")
+        self.client_secret = cfg.get("client_secret") or (secret_ref if secret_ref and not secret_ref.startswith("secret-") else None)
+        self.tenant_id = cfg.get("tenant_id") or cfg.get("azure_tenant_id", "common")
+
+        self._access_token: Optional[str] = None
+        self._token_expires_at: float = 0.0
 
         # In-memory D365 entity store
-        self._entities: Dict[str, List[Dict[str, Any]]] = endpoint_config.get("tables", {
-            "accounts": [],
-            "contacts": [],
-            "products": [],
-            "opportunities": [],
+        self._entities: Dict[str, List[Dict[str, Any]]] = cfg.get("tables", {
+            "accounts": [
+                {"accountid": "acc-001", "name": "Fabrikam Inc", "emailaddress1": "info@fabrikam.com", "telephone1": "555-0101", "statecode": 0},
+                {"accountid": "acc-002", "name": "Contoso Ltd", "emailaddress1": "contact@contoso.com", "telephone1": "555-0102", "statecode": 0},
+            ],
+            "contacts": [
+                {"contactid": "cnt-001", "fullname": "Jane Doe", "emailaddress1": "jane@fabrikam.com", "telephone1": "555-0103"},
+            ],
+            "products": [
+                {"productid": "prd-001", "productnumber": "PRD-X1", "name": "Surface Pro X", "price": 999.0},
+            ],
+            "opportunities": [
+                {"opportunityid": "opp-001", "name": "Q4 Cloud Modernization", "estimatedvalue": 250000.0, "statuscode": 1},
+            ],
         })
 
         # D365 custom migration metadata entity for ontology persistence: msdyn_migrationmappings
@@ -49,6 +67,38 @@ class Dynamics365Connector(BaseConnector):
         # Snapshots for rollback
         self._snapshots: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
         self._written_keys: set = set()
+
+    def _get_token(self) -> Optional[str]:
+        if not self.client_id or not self.client_secret:
+            return None
+        if self._access_token and time.time() < self._token_expires_at - 60:
+            return self._access_token
+
+        token_url = f"https://login.microsoftonline.com/{self.tenant_id}/oauth2/v2.0/token"
+        scope = f"{self.environment_url}/.default"
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                r = client.post(
+                    token_url,
+                    data={
+                        "grant_type": "client_credentials",
+                        "client_id": self.client_id,
+                        "client_secret": self.client_secret,
+                        "scope": scope,
+                    },
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    self._access_token = data.get("access_token")
+                    expires_in = data.get("expires_in", 3600)
+                    self._token_expires_at = time.time() + float(expires_in)
+                    return self._access_token
+                else:
+                    logger.warning(f"D365 OAuth token error ({r.status_code}): {r.text}")
+                    return None
+        except Exception as e:
+            logger.warning(f"Failed to acquire D365 Azure AD token: {e}")
+            return None
 
     def capabilities(self) -> ConnectorCapabilities:
         return ConnectorCapabilities(
@@ -62,11 +112,62 @@ class Dynamics365Connector(BaseConnector):
         )
 
     def test_connection(self) -> Dict[str, Any]:
-        """Tests D365 Dataverse connectivity without revealing secrets (TA-008)."""
+        """Tests D365 Dataverse connectivity."""
+        t0 = time.time()
+        if self.client_id and self.client_secret:
+            token = self._get_token()
+            latency = round((time.time() - t0) * 1000, 2)
+            if not token:
+                return {
+                    "status": "FAILED",
+                    "latency_ms": latency,
+                    "message": f"Azure AD OAuth failed for D365 client_id '{self.client_id}' on tenant '{self.tenant_id}'",
+                    "capabilities": [],
+                }
+
+            try:
+                with httpx.Client(timeout=10.0) as client:
+                    whoami_url = f"{self.environment_url}/api/data/{self.api_version}/WhoAmI"
+                    r = client.get(whoami_url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
+                    live_lat = round((time.time() - t0) * 1000, 2)
+                    if r.status_code == 200:
+                        data = r.json()
+                        org_id = data.get("OrganizationId", "active")
+                        return {
+                            "status": "SUCCESS",
+                            "latency_ms": live_lat,
+                            "message": f"Connected to live Dynamics 365 Dataverse org '{org_id}' at {self.environment_url}",
+                            "capabilities": [
+                                "dataverse_web_api",
+                                "odata_query_filter",
+                                "alternate_key_upsert",
+                                "ontology_catalog_persistence",
+                                "live_dataverse_api",
+                            ],
+                            "environment_url": self.environment_url,
+                            "api_version": self.api_version,
+                            "organization_id": org_id,
+                        }
+                    else:
+                        return {
+                            "status": "FAILED",
+                            "latency_ms": live_lat,
+                            "message": f"D365 WhoAmI returned HTTP {r.status_code}: {r.text[:200]}",
+                            "capabilities": [],
+                        }
+            except Exception as e:
+                return {
+                    "status": "FAILED",
+                    "latency_ms": round((time.time() - t0) * 1000, 2),
+                    "message": f"D365 Dataverse connection failed: {e}",
+                    "capabilities": [],
+                }
+
+        # Simulated / dev mode
         return {
             "status": "SUCCESS",
             "latency_ms": 18.2,
-            "message": f"Successfully authenticated with Dynamics 365 instance at '{self.environment_url}'",
+            "message": f"Authenticated with Dynamics 365 instance at '{self.environment_url}' [Simulated Dataverse Store]",
             "capabilities": [
                 "dataverse_web_api",
                 "odata_query_filter",
@@ -75,6 +176,109 @@ class Dynamics365Connector(BaseConnector):
             ],
             "environment_url": self.environment_url,
             "api_version": self.api_version,
+        }
+
+    def list_tables(self) -> List[Dict[str, Any]]:
+        """Returns entity tables from live Dataverse or simulated entity store."""
+        token = self._get_token()
+        if token:
+            try:
+                with httpx.Client(timeout=10.0) as client:
+                    ent_url = f"{self.environment_url}/api/data/{self.api_version}/EntityDefinitions?$select=LogicalName,DisplayName,PrimaryIdAttribute&$top=50"
+                    r = client.get(ent_url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
+                    if r.status_code == 200:
+                        vals = r.json().get("value", [])
+                        out = []
+                        for ent in vals:
+                            name = ent.get("LogicalName")
+                            pk = ent.get("PrimaryIdAttribute") or f"{name}id"
+                            out.append({
+                                "name": name,
+                                "row_count": 0,
+                                "columns": [
+                                    {"name": pk, "datatype": "guid", "is_pk": True},
+                                    {"name": "name", "datatype": "string", "is_pk": False},
+                                ],
+                            })
+                        if out:
+                            return out
+            except Exception as e:
+                logger.warning(f"Failed to query live D365 EntityDefinitions: {e}")
+
+        out: List[Dict[str, Any]] = []
+        for name, rows in self._entities.items():
+            columns: List[Dict[str, Any]] = []
+            if rows:
+                for idx, (col, val) in enumerate(rows[0].items()):
+                    dt = "string"
+                    if isinstance(val, bool):
+                        dt = "boolean"
+                    elif isinstance(val, (int, float)):
+                        dt = "numeric"
+                    columns.append({"name": col, "datatype": dt, "is_pk": idx == 0})
+            else:
+                columns = [
+                    {"name": f"{name}id", "datatype": "guid", "is_pk": True},
+                    {"name": "name", "datatype": "string", "is_pk": False},
+                ]
+            out.append({"name": name, "row_count": len(rows), "columns": columns})
+        return out
+
+    def read_table(self, table: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """Reads rows from D365 entity."""
+        token = self._get_token()
+        if token:
+            try:
+                with httpx.Client(timeout=10.0) as client:
+                    query_url = f"{self.environment_url}/api/data/{self.api_version}/{table}?$top={limit}"
+                    r = client.get(query_url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
+                    if r.status_code == 200:
+                        vals = r.json().get("value", [])
+                        return vals
+            except Exception as e:
+                logger.warning(f"Error reading live D365 entity {table}: {e}")
+
+        return [dict(r) for r in self._entities.get(table, [])[:limit]]
+
+    def write_records(
+        self,
+        table: str,
+        records: List[Dict[str, Any]],
+        mode: str = "append",
+    ) -> Dict[str, Any]:
+        """Inserts records into D365 entity."""
+        if not records:
+            return {"table": table, "inserted": 0, "updated": 0, "total": 0}
+
+        token = self._get_token()
+        if token:
+            inserted = 0
+            try:
+                with httpx.Client(timeout=15.0) as client:
+                    for rec in records:
+                        url = f"{self.environment_url}/api/data/{self.api_version}/{table}"
+                        r = client.post(url, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, json=rec)
+                        if r.status_code in (200, 201, 204):
+                            inserted += 1
+                return {"table": table, "inserted": inserted, "updated": 0, "total": inserted}
+            except Exception as e:
+                logger.warning(f"Live D365 write failed: {e}")
+
+        if table not in self._entities:
+            self._entities[table] = []
+
+        if mode == "replace":
+            self._entities[table] = [dict(r) for r in records]
+            return {"table": table, "inserted": len(records), "updated": 0, "total": len(records)}
+
+        for r in records:
+            self._entities[table].append(dict(r))
+
+        return {
+            "table": table,
+            "inserted": len(records),
+            "updated": 0,
+            "total": len(self._entities[table]),
         }
 
     def discover(self) -> List[Dict[str, Any]]:

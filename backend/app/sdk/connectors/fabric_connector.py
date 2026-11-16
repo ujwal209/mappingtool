@@ -6,6 +6,7 @@ Supports OneLake Lakehouses, Fabric Warehouses, and Delta Lake tables.
 import copy
 import time
 from typing import Any, Dict, Iterator, List, Optional
+import httpx
 
 from app.core.logging import logger
 from app.sdk.connectors.base import (
@@ -26,29 +27,126 @@ class MicrosoftFabricConnector(BaseConnector):
     ):
         super().__init__(endpoint_config, secret_ref)
         self.version = "2.1.0"
-        self.workspace_id = self.config.get("workspace_id", "fabric-workspace-default")
-        self.lakehouse_id = self.config.get("lakehouse_id", "fabric-lakehouse-gold")
-        self.tenant_id = self.config.get("azure_tenant_id", "common")
-        self._tables: Dict[str, List[Dict[str, Any]]] = self.config.get(
+        cfg = self.config or {}
+        self.workspace_id = cfg.get("workspace_id", "fabric-workspace-default")
+        self.lakehouse_id = cfg.get("lakehouse_id", "fabric-lakehouse-gold")
+        self.tenant_id = cfg.get("azure_tenant_id") or cfg.get("tenant_id", "common")
+        self.client_id = cfg.get("client_id")
+        self.client_secret = cfg.get("client_secret") or (secret_ref if secret_ref and not secret_ref.startswith("secret-") else None)
+
+        self._access_token: Optional[str] = None
+        self._token_expires_at: float = 0.0
+
+        self._tables: Dict[str, List[Dict[str, Any]]] = cfg.get(
             "tables",
             {
-                "Fabric_Customer_Gold": [],
-                "Fabric_Sales_Fact": [],
-                "Fabric_Product_Dimension": [],
+                "Fabric_Customer_Gold": [
+                    {"customer_id": "CUST-001", "name": "Global Logistics Corp", "tier": "Gold", "revenue": 1250000.0},
+                    {"customer_id": "CUST-002", "name": "Apex Manufacturing", "tier": "Platinum", "revenue": 3400000.0},
+                ],
+                "Fabric_Sales_Fact": [
+                    {"order_id": "ORD-901", "customer_id": "CUST-001", "amount": 45000.0, "status": "COMPLETED"},
+                    {"order_id": "ORD-902", "customer_id": "CUST-002", "amount": 120000.0, "status": "PROCESSING"},
+                ],
+                "Fabric_Product_Dimension": [
+                    {"product_id": "PRD-101", "sku": "SERV-ENTERPRISE", "category": "Cloud Services", "active": True},
+                ],
             },
         )
         self._ontology_catalog_table: List[Dict[str, Any]] = []
         self._snapshots: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
         self._written_keys: set = set()
 
+    def _get_token(self) -> Optional[str]:
+        if not self.client_id or not self.client_secret:
+            return None
+        if self._access_token and time.time() < self._token_expires_at - 60:
+            return self._access_token
+
+        token_url = f"https://login.microsoftonline.com/{self.tenant_id}/oauth2/v2.0/token"
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                r = client.post(
+                    token_url,
+                    data={
+                        "grant_type": "client_credentials",
+                        "client_id": self.client_id,
+                        "client_secret": self.client_secret,
+                        "scope": "https://api.fabric.microsoft.com/.default",
+                    },
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    self._access_token = data.get("access_token")
+                    expires_in = data.get("expires_in", 3600)
+                    self._token_expires_at = time.time() + float(expires_in)
+                    return self._access_token
+                else:
+                    logger.warning(f"Fabric OAuth token error ({r.status_code}): {r.text}")
+                    return None
+        except Exception as e:
+            logger.warning(f"Failed to acquire Fabric Azure AD token: {e}")
+            return None
+
     # ── New API ───────────────────────────────────────────
     def test_connection(self) -> Dict[str, Any]:
+        t0 = time.time()
+        # If client credentials are provided, attempt live verification
+        if self.client_id and self.client_secret:
+            token = self._get_token()
+            latency = round((time.time() - t0) * 1000, 2)
+            if not token:
+                return {
+                    "status": "FAILED",
+                    "latency_ms": latency,
+                    "message": f"Azure AD OAuth failed for client_id '{self.client_id}' on tenant '{self.tenant_id}'",
+                    "capabilities": [],
+                }
+
+            # Verify against Fabric API
+            try:
+                with httpx.Client(timeout=10.0) as client:
+                    fabric_url = f"https://api.fabric.microsoft.com/v1/workspaces/{self.workspace_id}/lakehouses/{self.lakehouse_id}/tables"
+                    r = client.get(fabric_url, headers={"Authorization": f"Bearer {token}"})
+                    live_latency = round((time.time() - t0) * 1000, 2)
+                    if r.status_code in (200, 204):
+                        return {
+                            "status": "SUCCESS",
+                            "latency_ms": live_latency,
+                            "message": f"Connected to live Microsoft Fabric workspace '{self.workspace_id}' (lakehouse '{self.lakehouse_id}')",
+                            "capabilities": [
+                                "snapshots",
+                                "cdc",
+                                "schema_discovery",
+                                "idempotent_write",
+                                "delta_format",
+                                "live_fabric_api",
+                            ],
+                            "workspace_id": self.workspace_id,
+                            "lakehouse_id": self.lakehouse_id,
+                        }
+                    else:
+                        return {
+                            "status": "FAILED",
+                            "latency_ms": live_latency,
+                            "message": f"Fabric REST API returned HTTP {r.status_code}: {r.text[:200]}",
+                            "capabilities": [],
+                        }
+            except Exception as e:
+                return {
+                    "status": "FAILED",
+                    "latency_ms": round((time.time() - t0) * 1000, 2),
+                    "message": f"Fabric REST API call failed: {e}",
+                    "capabilities": [],
+                }
+
+        # Simulated / dev mode
         return {
             "status": "SUCCESS",
             "latency_ms": 12.4,
             "message": (
                 f"Authenticated with Fabric workspace '{self.workspace_id}' "
-                f"(lakehouse '{self.lakehouse_id}')"
+                f"(lakehouse '{self.lakehouse_id}') [Simulated / In-Memory Delta Store]"
             ),
             "capabilities": [
                 "snapshots",
@@ -60,6 +158,31 @@ class MicrosoftFabricConnector(BaseConnector):
         }
 
     def list_tables(self) -> List[Dict[str, Any]]:
+        token = self._get_token()
+        if token:
+            try:
+                with httpx.Client(timeout=10.0) as client:
+                    fabric_url = f"https://api.fabric.microsoft.com/v1/workspaces/{self.workspace_id}/lakehouses/{self.lakehouse_id}/tables"
+                    r = client.get(fabric_url, headers={"Authorization": f"Bearer {token}"})
+                    if r.status_code == 200:
+                        data = r.json()
+                        items = data.get("data", [])
+                        out = []
+                        for item in items:
+                            tbl_name = item.get("name")
+                            out.append({
+                                "name": tbl_name,
+                                "row_count": 0,
+                                "columns": [
+                                    {"name": "id", "datatype": "string", "is_pk": True},
+                                    {"name": "data", "datatype": "json", "is_pk": False},
+                                ],
+                            })
+                        if out:
+                            return out
+            except Exception as e:
+                logger.warning(f"Failed to query live Fabric tables: {e}")
+
         out: List[Dict[str, Any]] = []
         for name, rows in self._tables.items():
             columns: List[Dict[str, Any]] = []

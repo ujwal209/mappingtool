@@ -51,48 +51,75 @@ interface ConnectorDefinition {
 
 const CONNECTOR_PRESETS: ConnectorDefinition[] = [
   {
-    id: "memory",
-    name: "In-Memory (Demo)",
-    category: "custom",
-    description: "In-process connector — perfect for demos without credentials.",
-  },
-  {
-    id: "relational",
-    name: "Relational (SQLite)",
+    id: "postgres",
+    name: "PostgreSQL",
     category: "database",
-    description: "In-process SQLite. Real SQL, no external server.",
+    description: "Live PostgreSQL, Supabase, Neon, CockroachDB, AWS RDS, or local host.",
+    available: true,
   },
   {
-    id: "rest_api",
-    name: "REST API",
-    category: "custom",
-    description: "Direct REST API schema discovery from any JSON endpoint.",
+    id: "mysql",
+    name: "MySQL & MariaDB",
+    category: "database",
+    description: "Localhost or cloud MySQL/MariaDB with automatic schema discovery.",
+    available: true,
   },
-  // ── MongoDB Atlas ────────────────────────────────────────
+  {
+    id: "supabase",
+    name: "Supabase",
+    category: "database",
+    description: "Supabase via PostgreSQL wire connection or PostgREST Web API with RLS.",
+    available: true,
+  },
   {
     id: "mongodb",
     name: "MongoDB Atlas",
     category: "database",
     description:
       "Live MongoDB Atlas cluster — real collections, nested-object flattening, idempotent upsert.",
+    available: true,
+  },
+  {
+    id: "relational",
+    name: "SQLite / Local File",
+    category: "database",
+    description: "Local SQLite file (.db / .sqlite) or high-performance in-memory DB.",
+    available: true,
+  },
+  {
+    id: "rest_api",
+    name: "REST API",
+    category: "custom",
+    description: "Direct REST API schema discovery from any JSON endpoint.",
+    available: true,
   },
   {
     id: "fabric",
     name: "Microsoft Fabric",
     category: "lakehouse",
     description: "Fabric OneLake Lakehouses & Delta tables.",
+    available: true,
   },
   {
     id: "d365",
     name: "Dynamics 365",
     category: "saas",
     description: "Dataverse CRM & ERP OData Web API.",
+    available: true,
   },
   {
     id: "sheet",
     name: "Spreadsheet",
     category: "storage",
     description: "CSV / Excel uploads via intake-sheet endpoints.",
+    available: true,
+  },
+  {
+    id: "memory",
+    name: "In-Memory (Demo)",
+    category: "custom",
+    description: "In-process connector — perfect for demos without credentials.",
+    available: true,
   },
   {
     id: "snowflake",
@@ -100,13 +127,6 @@ const CONNECTOR_PRESETS: ConnectorDefinition[] = [
     category: "lakehouse",
     description: "Snowflake Data Cloud (coming soon).",
     available: false,
-  },
-  {
-    id: "postgres",
-    name: "PostgreSQL",
-    category: "database",
-    description: "Transactional PostgreSQL (coming soon).",
-    available: true,
   },
 ];
 

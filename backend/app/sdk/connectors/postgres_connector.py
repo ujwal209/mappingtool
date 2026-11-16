@@ -114,20 +114,23 @@ def _mask_dsn(dsn: str) -> str:
 
 def _ensure_sslmode(dsn: str, default: str = "require") -> str:
     """
-    Ensure an sslmode is present in the DSN.
+    Ensure an appropriate sslmode is present in the DSN.
 
     Most hosted providers (Neon, Supabase, Railway, RDS, Azure) require
-    TLS, and psycopg 3 does NOT default to SSL — it just trusts libpq's
-    default, which varies. We inject `sslmode=require` when the user
-    didn't specify anything, so hosted connections work out of the box.
+    TLS, and psycopg 3 does NOT default to SSL. We inject `sslmode=require`
+    when the user didn't specify anything.
 
-    If the caller already set sslmode (e.g. `verify-full` for
-    CockroachDB), we leave it alone.
+    For local connections (localhost, 127.0.0.1), default to `prefer` or `disable`
+    so developers can connect to local Postgres instances without SSL cert errors.
     """
     if not dsn:
         return dsn
     try:
         p = urlparse(dsn)
+        host = (p.hostname or "").lower()
+        if host in ("localhost", "127.0.0.1", "::1", "host.docker.internal") or host.endswith(".local"):
+            default = "prefer"
+
         q = dict(parse_qsl(p.query))
         if "sslmode" in q:
             return dsn
@@ -178,6 +181,19 @@ class PostgresConnector(BaseConnector):
             or cfg.get("database_url")
             or ""
         ).strip()
+
+        # If DSN is not given, assemble from discrete host, port, user, password, dbname
+        if not self.dsn and (cfg.get("host") or cfg.get("database") or cfg.get("dbname")):
+            host = (cfg.get("host") or "localhost").strip()
+            port = int(cfg.get("port") or 5432)
+            user = quote_plus(str(cfg.get("user") or cfg.get("username") or "postgres").strip())
+            password = quote_plus(str(cfg.get("password") or "").strip())
+            db = (cfg.get("database") or cfg.get("dbname") or "postgres").strip().lstrip("/")
+            sslmode = cfg.get("sslmode")
+            if not sslmode:
+                sslmode = "prefer" if host in ("localhost", "127.0.0.1", "::1", "host.docker.internal") else "require"
+            creds = f"{user}:{password}@" if password or user else ""
+            self.dsn = f"postgresql://{creds}{host}:{port}/{db}?sslmode={sslmode}"
 
         # If user supplied a password separately, inject it.
         self.password: str = (cfg.get("password") or "").strip()

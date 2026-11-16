@@ -28,6 +28,9 @@ from app.sdk.connectors.d365_connector import Dynamics365Connector
 from app.sdk.connectors.rest_api_connector import RestApiConnector
 from app.sdk.connectors.mongodb_connector import MongoDBAtlasConnector
 from app.sdk.connectors.postgres_connector import PostgresConnector
+from app.sdk.connectors.mysql_connector import MySQLConnector
+from app.sdk.connectors.supabase_connector import SupabaseConnector
+from app.sdk.connectors.relational import RelationalConnector
 
 
 class ConnectorRegistry:
@@ -63,8 +66,20 @@ class ConnectorRegistry:
             "redshift": PostgresConnector,
             "postgis": PostgresConnector,
 
-            # ── Aliases that reuse a real connector ────────────
-            "relational": MemoryConnector,
+            # ── MySQL & MariaDB ────────────────────────────────
+            "mysql": MySQLConnector,
+            "mariadb": MySQLConnector,
+
+            # ── Supabase (Wire & PostgREST API) ────────────────
+            "supabase": SupabaseConnector,
+            "supabase_db": SupabaseConnector,
+
+            # ── Relational / SQLite ────────────────────────────
+            "relational": RelationalConnector,
+            "sqlite": RelationalConnector,
+            "sqlite3": RelationalConnector,
+
+            # ── File and Upload Aliases ────────────────────────
             "file": MemoryConnector,
             "sheet": MemoryConnector,
             "sheets": MemoryConnector,
@@ -148,12 +163,18 @@ class ConnectorRegistry:
         )
 
         # ── Live connectors manage their own state ──────────
-        # MongoDBAtlasConnector and PostgresConnector both read from a
-        # live server on every call. Their in-memory `_tables` cache is
-        # not the source of truth — rehydrating from `dataset_rows` would
-        # OVERWRITE the live behavior with stale cached rows, causing the
-        # preflight gate to see the wrong data.
-        if isinstance(connector, (MongoDBAtlasConnector, PostgresConnector)):
+        # Live connectors manage their own state and query their engine directly.
+        # Overwriting with dataset_rows cache would produce stale results.
+        if isinstance(
+            connector,
+            (
+                MongoDBAtlasConnector,
+                PostgresConnector,
+                MySQLConnector,
+                SupabaseConnector,
+                RelationalConnector,
+            ),
+        ):
             return connector
 
         # Only rehydrate connectors that hold in-memory tables
@@ -336,9 +357,39 @@ class ConnectorRegistry:
                 "type": "relational",
                 "name": "Relational (SQLite)",
                 "category": "Relational Database",
-                "aliases": ["sqlite"],
-                "description": "In-process SQLite database",
-                "capabilities": ["snapshots", "schema_discovery", "idempotent_write"],
+                "aliases": ["sqlite", "sqlite3"],
+                "description": "Local SQLite database file or in-memory DB",
+                "capabilities": ["snapshots", "schema_discovery", "idempotent_write", "local_file"],
+                "available": True,
+            },
+            {
+                "type": "mysql",
+                "name": "MySQL & MariaDB",
+                "category": "Relational Database",
+                "aliases": ["mariadb"],
+                "description": "Live MySQL or MariaDB instance (Localhost, RDS, PlanetScale)",
+                "capabilities": [
+                    "schema_discovery",
+                    "read_batch",
+                    "write_batch",
+                    "pushdown_filters",
+                    "idempotent_write",
+                ],
+                "available": True,
+            },
+            {
+                "type": "supabase",
+                "name": "Supabase",
+                "category": "Cloud Database & Backend",
+                "aliases": ["supabase_db"],
+                "description": "Supabase project via PostgreSQL wire protocol or PostgREST API",
+                "capabilities": [
+                    "schema_discovery",
+                    "read_batch",
+                    "write_batch",
+                    "postgrest_api",
+                    "rls_enforced",
+                ],
                 "available": True,
             },
         ]

@@ -58,15 +58,42 @@ class RelationalConnector(BaseConnector):
         secret_ref: Optional[str] = None,
     ):
         super().__init__(endpoint_config, secret_ref)
+        cfg = self.config or {}
+        raw_path = (
+            cfg.get("database_path")
+            or cfg.get("db_path")
+            or cfg.get("file_path")
+            or cfg.get("path")
+            or cfg.get("database")
+            or cfg.get("connection_string")
+            or ":memory:"
+        ).strip()
+        # Clean uri prefix if passed like sqlite:///path/to/db
+        if raw_path.startswith("sqlite:///"):
+            raw_path = raw_path[10:]
+        elif raw_path.startswith("sqlite://"):
+            raw_path = raw_path[9:]
+
+        self.db_path = raw_path or ":memory:"
         self._endpoint_key = (
-            self.config.get("endpoint_id")
-            or self.config.get("name")
-            or f"sqlite-{uuid.uuid4().hex[:8]}"
+            self.db_path
+            if self.db_path != ":memory:"
+            else (
+                cfg.get("endpoint_id")
+                or cfg.get("name")
+                or f"sqlite-{uuid.uuid4().hex[:8]}"
+            )
         )
 
     def _connect(self) -> sqlite3.Connection:
         if self._endpoint_key not in self._DBS:
-            conn = sqlite3.connect(":memory:", check_same_thread=False)
+            import os
+            target = self.db_path
+            if target != ":memory:":
+                parent = os.path.dirname(target)
+                if parent and not os.path.exists(parent):
+                    os.makedirs(parent, exist_ok=True)
+            conn = sqlite3.connect(target, check_same_thread=False)
             conn.row_factory = sqlite3.Row
             self._DBS[self._endpoint_key] = conn
         return self._DBS[self._endpoint_key]
@@ -76,15 +103,22 @@ class RelationalConnector(BaseConnector):
         try:
             conn = self._connect()
             conn.execute("SELECT 1").fetchone()
+            msg = (
+                f"SQLite connected (file: '{self.db_path}')"
+                if self.db_path != ":memory:"
+                else f"SQLite in-memory connected ({self._endpoint_key})"
+            )
             return {
                 "status": "SUCCESS",
                 "latency_ms": round((time.time() - t0) * 1000, 2),
-                "message": f"SQLite connected ({self._endpoint_key})",
+                "message": msg,
                 "capabilities": [
                     "snapshots",
                     "schema_discovery",
                     "idempotent_write",
+                    "local_file",
                 ],
+                "database_path": self.db_path,
             }
         except Exception as e:
             return {
