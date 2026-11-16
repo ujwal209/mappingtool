@@ -260,7 +260,8 @@ class OrchestratorService:
                     "saved_at": time.time(),
                 }
                 store.save_destination_mapping(tenant_id, target_system.system_id, mapping_catalog)
-                tgt_conn.save_destination_mapping_catalog(mapping_catalog)
+                if hasattr(tgt_conn, "save_destination_mapping_catalog"):
+                    tgt_conn.save_destination_mapping_catalog(mapping_catalog)
 
             # 6. Node: RECONCILE (Section 13)
             reconcile_task = TaskAttempt(run_id=run.run_id, node_id="RECONCILE", partition_id="part-0", state="RUNNING")

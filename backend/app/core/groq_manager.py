@@ -163,6 +163,7 @@ class GroqRoundRobinManager:
         self,
         model_name: str = "qwen/qwen3.8-27b",
         temperature: float = 0.0,
+        max_tokens: int = 8192,
         provided_keys: Optional[List[str]] = None,
     ) -> Tuple[ChatGroq, str]:
         """
@@ -174,6 +175,7 @@ class GroqRoundRobinManager:
             groq_api_key=key,
             model_name=model_name,
             temperature=temperature,
+            max_tokens=max_tokens,
         )
         return chat, key
 

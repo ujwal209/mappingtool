@@ -156,6 +156,7 @@ class TableMatchingAgentService:
             "target_tables": target_tables,
             "ontology_version_id": ontology_version_id,
             "retrieved_rules": [],
+            "custom_instructions": custom_instructions,
             "model_name": model_name,
             "api_keys": api_keys,
             "use_ai": use_ai,

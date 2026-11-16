@@ -1,9 +1,10 @@
 """
-Proposal generation node.
+Proposal generation node for table matching within LangGraph.
 
-Combines AI (Groq LLM structured output) and high-accuracy Deterministic matching.
-Guarantees that every source table receives high-confidence proposals and
-resolves schema prefixes and case-insensitive table names without false drops.
+Strictly LLM-driven: eliminates all hardcoded deterministic matchers.
+All table pairs are discovered dynamically by the LLM reasoning over
+business concepts, foreign key topologies, and column-level schemas,
+enforced through validated Pydantic models.
 """
 
 from typing import Any, Dict, List, Optional, Set
@@ -11,9 +12,6 @@ from typing import Any, Dict, List, Optional, Set
 from app.agents.table_matching_agent.llm.structured import (
     DEFAULT_TABLE_MATCHING_MODEL,
     run_structured_table_matching,
-)
-from app.agents.table_matching_agent.matchers.deterministic import (
-    deterministic_table_match,
 )
 from app.agents.table_matching_agent.prompts import (
     TABLE_MATCHING_SYSTEM_PROMPT,
@@ -34,14 +32,18 @@ def _format_bindings_for_prompt(bindings: List[Dict[str, str]]) -> str:
     if not bindings:
         return ""
     lines = [
-        f"  • {b['table_name']}.{b['column_name']} -> {b['concept_name']}"
+        f"  • {b.get('table_name')}.{b.get('column_name')} -> {b.get('concept_name')}"
         for b in bindings[:100]
+        if b.get("table_name") and b.get("column_name")
     ]
     return "\n".join(lines)
 
 
 def _resolve_table_name(cand: str, valid_names: Set[str]) -> Optional[str]:
-    """Resolves table name across case differences, whitespace, or schema prefixes."""
+    """
+    Resolves table name across case differences, whitespace, or schema prefixes.
+    Prevents false rejections when LLM provides e.g. 'erp_source_db.legacy_customers'.
+    """
     if not cand:
         return None
     c = str(cand).strip()
@@ -67,8 +69,9 @@ def _to_candidates(
     response: TableMatchingResponse,
     valid_source_names: Set[str],
     valid_target_names: Set[str],
+    min_confidence: float = 0.0,
 ) -> List[TablePairCandidate]:
-    """Convert Pydantic response → state dicts, with robust canonical resolution."""
+    """Convert Pydantic response → state dicts, strictly validating against known tables."""
     out: List[TablePairCandidate] = []
 
     for d in response.pairs:
@@ -77,8 +80,16 @@ def _to_candidates(
 
         if not resolved_src or not resolved_tgt:
             logger.warning(
-                f"[TableMatchingAgent] Dropping unrecognized pair "
+                f"[TableMatchingAgent] Dropping non-existent pair proposal: "
                 f"'{d.source_table}' → '{d.target_table}'"
+            )
+            continue
+
+        conf = float(d.confidence_score)
+        if conf < min_confidence:
+            logger.info(
+                f"[TableMatchingAgent] Skipping low-confidence proposal ({conf:.2f} < {min_confidence}): "
+                f"{resolved_src} → {resolved_tgt}"
             )
             continue
 
@@ -86,14 +97,14 @@ def _to_candidates(
             TablePairCandidate(
                 source_table=resolved_src,
                 target_table=resolved_tgt,
-                confidence_score=float(d.confidence_score),
+                confidence_score=conf,
                 match_status="MATCHED",
                 matched_concepts=list(d.matched_concepts or []),
                 matched_columns=list(d.matched_columns or []),
                 matched_columns_count=d.matched_columns_count or len(d.matched_columns or []),
-                rationale=d.rationale or "Matched by AI semantic reasoning.",
+                rationale=d.rationale or "Matched by LLM semantic reasoning and schema alignment.",
                 requires_masking=bool(d.requires_masking),
-                rules_applied=["ai_structured_matcher"],
+                rules_applied=["llm_semantic_matcher"],
                 depends_on=list(d.depends_on or []),
             )
         )
@@ -102,7 +113,10 @@ def _to_candidates(
 
 
 def node_generate_pairs(state: TableMatchingState) -> TableMatchingState:
-    """Generate table-pair proposals via AI supplemented by deterministic matching."""
+    """
+    Generate table-pair proposals strictly from LLM reasoning.
+    Zero hardcoded deterministic matchers.
+    """
     state["stage"] = "generate_pairs"
 
     if state.get("error"):
@@ -118,29 +132,13 @@ def node_generate_pairs(state: TableMatchingState) -> TableMatchingState:
     bindings = state.get("ontology_bindings") or []  # type: ignore
     min_conf = state.get("min_confidence", 0.40)
 
-    # Compute deterministic pairs first as a baseline
-    deterministic_pairs = deterministic_table_match(
-        source_tables=source_tables,
-        target_tables=target_tables,
-        ontology_bindings=bindings,
-        min_confidence=min_conf,
-    )
-
-    # ── Deterministic-only path ───────────────────────────────
-    if not state.get("use_ai", True):
-        logger.info("[TableMatchingAgent] use_ai=False — using deterministic matcher.")
-        state["pairs"] = deterministic_pairs
-        state["review_status"] = "PENDING_REVIEW"
-        return state
-
-    # ── AI path ────────────────────────────────────────────────
     valid_sources = {t.get("name") for t in source_tables if t.get("name")}
     valid_targets = {t.get("name") for t in target_tables if t.get("name")}
 
     bindings_str = _format_bindings_for_prompt(bindings)
     rag_context = "\n".join(state.get("retrieved_rules", []) or [])
     custom = state.get("custom_instructions") or (
-        "Match tables by shared business concept, foreign key topology, and attribute overlap."
+        "Analyze schemas, column semantics, and foreign key topology to find matching table pairs."
     )
 
     user_prompt = build_table_matching_user_prompt(
@@ -150,6 +148,11 @@ def node_generate_pairs(state: TableMatchingState) -> TableMatchingState:
         rag_context=rag_context,
         custom_instructions=custom,
         min_confidence=min_conf,
+    )
+
+    logger.info(
+        f"[TableMatchingAgent] Running LLM matching across {len(source_tables)} source tables "
+        f"and {len(target_tables)} target tables..."
     )
 
     response = None
@@ -162,32 +165,29 @@ def node_generate_pairs(state: TableMatchingState) -> TableMatchingState:
             model_name=state.get("model_name", DEFAULT_TABLE_MATCHING_MODEL),
         )
     except Exception as e:
-        logger.warning(f"[TableMatchingAgent] AI matching error: {e}")
+        logger.error(f"[TableMatchingAgent] LLM matching invocation error: {e}")
+        state["error"] = f"LLM matching failed: {e}"
+        state["pairs"] = []
+        return state
 
-    ai_candidates: List[TablePairCandidate] = []
-    if response and response.pairs:
-        ai_candidates = _to_candidates(response, valid_sources, valid_targets)
-        logger.info(f"[TableMatchingAgent] LLM returned {len(ai_candidates)} validated pair(s).")
+    if not response or not response.pairs:
+        logger.warning("[TableMatchingAgent] LLM returned no table matching proposals.")
+        state["pairs"] = []
+        state["review_status"] = "PENDING_REVIEW"
+        return state
 
-    # Combine AI candidates with deterministic baseline so no source table is left unmatched
-    final_pairs: List[TablePairCandidate] = list(ai_candidates)
-    matched_sources = {p["source_table"] for p in final_pairs}
+    ai_candidates = _to_candidates(
+        response=response,
+        valid_source_names=valid_sources,
+        valid_target_names=valid_targets,
+        min_confidence=min_conf,
+    )
 
-    for dp in deterministic_pairs:
-        if dp["source_table"] not in matched_sources:
-            final_pairs.append(dp)
-            matched_sources.add(dp["source_table"])
+    # Sort candidates descending by confidence score
+    ai_candidates.sort(key=lambda x: x["confidence_score"], reverse=True)
 
-    # If AI returned nothing, use deterministic pairs directly
-    if not final_pairs:
-        final_pairs = deterministic_pairs
-
-    # Sort descending by confidence score
-    final_pairs.sort(key=lambda x: x["confidence_score"], reverse=True)
-
-    state["pairs"] = final_pairs
-    proposed = len(state.get("pairs", []))
-    logger.info(f"[TableMatchingAgent] {proposed} total pair candidate(s) proposed.")
-
+    state["pairs"] = ai_candidates
     state["review_status"] = "PENDING_REVIEW"
+    logger.info(f"[TableMatchingAgent] {len(ai_candidates)} pair candidate(s) discovered by LLM.")
+
     return state
