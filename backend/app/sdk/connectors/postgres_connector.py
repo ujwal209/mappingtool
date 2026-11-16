@@ -143,6 +143,86 @@ def _ensure_sslmode(dsn: str, default: str = "require") -> str:
         return dsn
 
 
+def _auto_resolve_supabase_ipv4(dsn: str) -> str:
+    """
+    Supabase direct connections (db.<ref>.supabase.co:5432) only resolve over IPv6.
+    If the caller's network/host lacks IPv6 routing, direct connections time out.
+    This helper checks reachability and automatically transparently routes
+    through the Supabase connection pooler (aws-0-<region>.pooler.supabase.com:6543)
+    which is 100% IPv4 compatible.
+    """
+    if not dsn or "supabase.co" not in dsn:
+        return dsn
+    try:
+        import socket
+        from urllib.parse import urlparse, urlunparse, parse_qsl, quote_plus
+
+        p = urlparse(dsn)
+        host = (p.hostname or "").lower()
+        if host.startswith("db.") and host.endswith(".supabase.co"):
+            ref = host[3:-12]  # extract project ref
+            port = p.port or 5432
+
+            # Quick probe to see if host:port is reachable over current network
+            reachable = False
+            try:
+                s = socket.create_connection((host, port), timeout=1.2)
+                s.close()
+                reachable = True
+            except Exception:
+                reachable = False
+
+            if not reachable:
+                logger.info(
+                    f"[Postgres] Supabase direct host '{host}:{port}' is unreachable (IPv6 constraint). "
+                    f"Auto-routing via Supabase IPv4 connection pooler..."
+                )
+                pooler_regions = [
+                    "ap-south-1",
+                    "us-east-1",
+                    "eu-central-1",
+                    "ap-southeast-1",
+                    "us-west-1",
+                    "eu-west-1",
+                ]
+                best_pooler = None
+                for reg in pooler_regions:
+                    cand = f"aws-0-{reg}.pooler.supabase.com"
+                    try:
+                        s = socket.create_connection((cand, 6543), timeout=1.0)
+                        s.close()
+                        best_pooler = cand
+                        break
+                    except Exception:
+                        pass
+
+                if best_pooler:
+                    raw_user = p.username or "postgres"
+                    new_user = (
+                        f"{raw_user}.{ref}"
+                        if not raw_user.endswith(f".{ref}")
+                        else raw_user
+                    )
+                    pwd = p.password or ""
+                    creds = (
+                        f"{quote_plus(new_user)}:{quote_plus(pwd)}@"
+                        if pwd
+                        else f"{quote_plus(new_user)}@"
+                    )
+                    new_netloc = f"{creds}{best_pooler}:6543"
+                    q = dict(parse_qsl(p.query))
+                    q["sslmode"] = "require"
+                    new_q = "&".join(f"{k}={v}" for k, v in q.items())
+                    new_dsn = urlunparse(
+                        (p.scheme, new_netloc, p.path or "/postgres", p.params, new_q, p.fragment)
+                    )
+                    logger.info(f"[Postgres] Auto-routed to Supabase pooler: {best_pooler}:6543")
+                    return new_dsn
+    except Exception as e:
+        logger.warning(f"[Postgres] Could not auto-route Supabase pooler: {e}")
+    return dsn
+
+
 def _json_safe(value: Any) -> Any:
     """Coerce psycopg-native types into JSON-serializable equivalents."""
     if value is None:
@@ -218,6 +298,8 @@ class PostgresConnector(BaseConnector):
 
         # Ensure TLS on hosted connections unless caller chose otherwise.
         self.dsn = _ensure_sslmode(self.dsn)
+        # Transparently route IPv6-only Supabase direct hosts through IPv4 connection poolers if unreachable
+        self.dsn = _auto_resolve_supabase_ipv4(self.dsn)
 
         self.schema: str = (cfg.get("schema") or "public").strip() or "public"
         self.connect_timeout: int = int(cfg.get("connect_timeout") or 10)
