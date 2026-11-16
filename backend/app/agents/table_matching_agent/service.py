@@ -407,8 +407,45 @@ class TableMatchingAgentService:
         self, tenant_id: str, system_id: str
     ) -> List[Dict[str, Any]]:
         datasets = store.list_datasets(tenant_id, system_id=system_id)
+        if not datasets:
+            # Auto-introspect from connector if system has connection config
+            try:
+                sys_obj = store.get_system(tenant_id, system_id)
+                if sys_obj and sys_obj.connection_config:
+                    from app.models.canonical import CanonicalDataset, CanonicalField
+                    from app.sdk.connectors.registry import connector_registry
+                    c_type = sys_obj.kind.value if hasattr(sys_obj.kind, "value") else str(sys_obj.kind)
+                    conn = connector_registry.get_connector(
+                        connector_type=c_type,
+                        endpoint_config=sys_obj.connection_config,
+                    )
+                    discovered_tables = conn.list_tables()
+                    for d_tbl in discovered_tables:
+                        t_name = d_tbl.get("name", "table")
+                        f_list = [
+                            CanonicalField(
+                                name=c.get("name"),
+                                datatype=c.get("datatype", "string"),
+                                is_primary_key=bool(c.get("is_pk", False)),
+                                nullable=bool(c.get("nullable", True)),
+                            )
+                            for c in d_tbl.get("columns", [])
+                        ]
+                        ds_obj = CanonicalDataset(
+                            dataset_id=f"ds-{uuid.uuid4().hex[:8]}",
+                            system_id=system_id,
+                            name=t_name,
+                            physical_name=t_name,
+                            fields=f_list,
+                        )
+                        store.create_dataset(tenant_id, ds_obj)
+                    datasets = store.list_datasets(tenant_id, system_id=system_id)
+            except Exception as e:
+                logger.warning(f"[TableMatchingAgent] Auto-introspecting datasets for {system_id} failed: {e}")
+
         tables: List[Dict[str, Any]] = []
         for ds in datasets or []:
+            name = getattr(ds, "physical_name", None) or getattr(ds, "name", None) or "table"
             columns = [
                 {
                     "name": f.name,
@@ -432,7 +469,7 @@ class TableMatchingAgentService:
                     )
             tables.append(
                 {
-                    "name": ds.physical_name,
+                    "name": name,
                     "columns": columns,
                     "fks": fks,
                 }

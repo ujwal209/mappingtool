@@ -45,6 +45,27 @@ MIN_FUZZY_MATCH = 65.0
 # ============================================================
 # Module-level helpers
 # ============================================================
+def _lookup_dataset(name: str, ds_list: List[Any]) -> Optional[Any]:
+    if not name or not ds_list:
+        return None
+    name_clean = str(name).strip()
+    bare = name_clean.split(".")[-1].lower()
+
+    for ds in ds_list:
+        p_name = getattr(ds, "physical_name", "") or ""
+        d_name = getattr(ds, "name", "") or ""
+        if name_clean in (p_name, d_name):
+            return ds
+
+    for ds in ds_list:
+        p_name = getattr(ds, "physical_name", "") or ""
+        d_name = getattr(ds, "name", "") or ""
+        if p_name.split(".")[-1].lower() == bare or d_name.split(".")[-1].lower() == bare:
+            return ds
+
+    return None
+
+
 def _pair_id(src: str, tgt: str) -> str:
     return f"{src}__{tgt}"
 
@@ -336,21 +357,15 @@ class PairMappingService:
         if not raw_pairs:
             raise ValueError("Table mapping set has no pairs")
 
-        src_map = {
-            d.physical_name: d
-            for d in store.list_datasets(tenant_id, system_id=tms.source_system_id)
-        }
-        tgt_map = {
-            d.physical_name: d
-            for d in store.list_datasets(tenant_id, system_id=tms.target_system_id)
-        }
+        src_datasets = store.list_datasets(tenant_id, system_id=tms.source_system_id) or []
+        tgt_datasets = store.list_datasets(tenant_id, system_id=tms.target_system_id) or []
 
         blocks: List[PairBlock] = []
         for p in raw_pairs:
             src_table = p.get("source_table") or ""
             tgt_table = p.get("target_table") or ""
-            src_ds = src_map.get(src_table)
-            tgt_ds = tgt_map.get(tgt_table)
+            src_ds = _lookup_dataset(src_table, src_datasets)
+            tgt_ds = _lookup_dataset(tgt_table, tgt_datasets)
             if not src_ds or not tgt_ds:
                 logger.warning(
                     f"[PairMapping] Skipping {src_table} → {tgt_table}: "

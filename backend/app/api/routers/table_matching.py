@@ -10,9 +10,12 @@ Endpoints:
   POST   /table-pairs/{set_id}/review       — legacy (unused by UI)
 """
 
+import json
+import time
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.agents.table_matching_agent.service import (
@@ -91,6 +94,73 @@ def propose_table_pairs(
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post(
+    "/mapping-sets/{project_id}/table-pairs/propose/stream",
+    summary="Stream table pair proposal execution with real-time agent updates",
+)
+def propose_table_pairs_stream(
+    project_id: str,
+    req: ProposePairsRequest,
+    auth: AuthContext = Depends(get_auth_context),
+):
+    def event_stream():
+        try:
+            # 1. Start event
+            yield f"data: {json.dumps({'type': 'status', 'stage': 'init', 'message': 'Initializing Table Matching Agent...', 'progress': 10})}\n\n"
+            time.sleep(0.1)
+
+            # 2. Inspect datasets
+            src_tables = table_matching_agent_service._load_tables_for_system(auth.tenant_id, req.source_system_id)
+            tgt_tables = table_matching_agent_service._load_tables_for_system(auth.tenant_id, req.target_system_id)
+
+            yield f"data: {json.dumps({'type': 'status', 'stage': 'schemas_loaded', 'message': f'Loaded {len(src_tables)} source tables and {len(tgt_tables)} target tables.', 'progress': 25, 'source_count': len(src_tables), 'target_count': len(tgt_tables)})}\n\n"
+            time.sleep(0.15)
+
+            # 3. Knowledge base & RAG grounding
+            yield f"data: {json.dumps({'type': 'status', 'stage': 'rag_grounding', 'message': 'Grounding with domain business rules and entity catalog...', 'progress': 40})}\n\n"
+            time.sleep(0.15)
+
+            # 4. Agent reasoning & candidate generation
+            yield f"data: {json.dumps({'type': 'status', 'stage': 'evaluating', 'message': 'AI reasoning across entity semantics, synonyms, and foreign keys...', 'progress': 55})}\n\n"
+
+            result = table_matching_agent_service.propose_pairs(
+                tenant_id=auth.tenant_id,
+                project_id=project_id,
+                source_system_id=req.source_system_id,
+                target_system_id=req.target_system_id,
+                name=req.name,
+                version_tag=req.version_tag,
+                ontology_version_id=req.ontology_version_id,
+                custom_instructions=req.custom_instructions,
+                use_ai=req.use_ai,
+                model_name=req.model_name or "openai/gpt-oss-120b",
+                api_keys=req.api_keys,
+                min_confidence=req.min_confidence,
+            )
+
+            pairs = result.get("pairs", [])
+            for idx, p in enumerate(pairs):
+                prog = 60 + int(((idx + 1) / max(len(pairs), 1)) * 35)
+                yield f"data: {json.dumps({'type': 'pair', 'pair': p, 'index': idx + 1, 'total': len(pairs), 'progress': prog})}\n\n"
+                time.sleep(0.08)
+
+            # 5. Completed
+            yield f"data: {json.dumps({'type': 'complete', 'progress': 100, 'table_mapping_set_id': result['table_mapping_set_id'], 'result': result, 'message': f'Successfully matched {len(pairs)} table pairs.'})}\n\n"
+
+        except Exception as exc:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get(

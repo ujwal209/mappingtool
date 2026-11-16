@@ -21,6 +21,7 @@ import {
   LoaderCircle,
   AlertTriangle,
   X,
+  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -116,6 +117,16 @@ function DiscoverInner() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Streaming progress states
+  const [streamingStatus, setStreamingStatus] = useState<string>("");
+  const [streamingProgress, setStreamingProgress] = useState<number>(0);
+  const [streamedPairs, setStreamedPairs] = useState<Array<{
+    source_table: string;
+    target_table: string;
+    confidence_score: number;
+    rationale?: string;
+  }>>([]);
+
   const canSubmit =
     !submitting &&
     name.trim().length > 0 &&
@@ -123,7 +134,7 @@ function DiscoverInner() {
     !!targetSystemId &&
     sourceSystemId !== targetSystemId;
 
-  // ── Submit ─────────────────────────────────────────────
+  // ── Submit with SSE Streaming & Fallback ───────────────────
   const submit = async () => {
     if (!name.trim()) {
       setError("Give this pair set a name.");
@@ -140,44 +151,126 @@ function DiscoverInner() {
 
     setSubmitting(true);
     setError(null);
+    setStreamingProgress(5);
+    setStreamingStatus("Initiating Table Matching Agent...");
+    setStreamedPairs([]);
+
+    const payload = {
+      source_system_id: sourceSystemId,
+      target_system_id: targetSystemId,
+      name: name.trim(),
+      version_tag: versionTag.trim() || "1.0.0",
+      ontology_version_id: ontologyVersionId || null,
+      custom_instructions: customInstructions.trim() || null,
+      use_ai: useAi,
+      min_confidence: minConfidence,
+    };
 
     try {
       const res = await fetch(
         `${API_BASE}/mapping-sets/${encodeURIComponent(
           projectId
-        )}/table-pairs/propose`,
+        )}/table-pairs/propose/stream`,
         {
           method: "POST",
           headers: authHeaders(),
-          body: JSON.stringify({
-            source_system_id: sourceSystemId,
-            target_system_id: targetSystemId,
-            name: name.trim(),
-            version_tag: versionTag.trim() || "1.0.0",
-            ontology_version_id: ontologyVersionId || null,
-            custom_instructions: customInstructions.trim() || null,
-            use_ai: useAi,
-            min_confidence: minConfidence,
-          }),
+          body: JSON.stringify(payload),
         }
       );
 
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.detail || `Propose failed (${res.status})`);
+        // Fallback to standard proposal endpoint
+        const fallbackRes = await fetch(
+          `${API_BASE}/mapping-sets/${encodeURIComponent(
+            projectId
+          )}/table-pairs/propose`,
+          {
+            method: "POST",
+            headers: authHeaders(),
+            body: JSON.stringify(payload),
+          }
+        );
+        if (!fallbackRes.ok) {
+          const body = await fallbackRes.json().catch(() => ({}));
+          throw new Error(body?.detail || `Propose failed (${fallbackRes.status})`);
+        }
+        const data = await fallbackRes.json();
+        toast.success("Pair set created", {
+          description: `${data.pairs?.length ?? 0} pair${
+            (data.pairs?.length ?? 0) === 1 ? "" : "s"
+          } proposed.`,
+        });
+        router.push(
+          `/table-matching/${encodeURIComponent(
+            data.table_mapping_set_id
+          )}?project_id=${encodeURIComponent(projectId)}`
+        );
+        return;
       }
 
-      const data = await res.json();
-      toast.success("Pair set created", {
-        description: `${data.pairs?.length ?? 0} pair${
-          (data.pairs?.length ?? 0) === 1 ? "" : "s"
-        } proposed.`,
-      });
-      router.push(
-        `/table-matching/${encodeURIComponent(
-          data.table_mapping_set_id
-        )}?project_id=${encodeURIComponent(projectId)}`
-      );
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+      let finalSetId: string | null = null;
+      let finalCount = 0;
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+
+          for (const chunk of parts) {
+            const clean = chunk.trim();
+            if (clean.startsWith("data: ")) {
+              try {
+                const parsed = JSON.parse(clean.slice(6));
+                if (parsed.type === "status") {
+                  setStreamingStatus(parsed.message || "Analyzing schemas...");
+                  if (typeof parsed.progress === "number") {
+                    setStreamingProgress(parsed.progress);
+                  }
+                } else if (parsed.type === "pair") {
+                  if (parsed.pair) {
+                    setStreamedPairs((prev) => [...prev, parsed.pair]);
+                  }
+                  if (typeof parsed.progress === "number") {
+                    setStreamingProgress(parsed.progress);
+                  }
+                } else if (parsed.type === "complete") {
+                  setStreamingProgress(100);
+                  setStreamingStatus(parsed.message || "Completed!");
+                  finalSetId = parsed.table_mapping_set_id;
+                  finalCount = parsed.result?.pairs?.length || 0;
+                } else if (parsed.type === "error") {
+                  throw new Error(parsed.message || "Matching engine returned error");
+                }
+              } catch (err: any) {
+                if (err.message && !err.message.includes("JSON")) {
+                  throw err;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      if (finalSetId) {
+        toast.success("Pair set created", {
+          description: `${finalCount} pair${finalCount === 1 ? "" : "s"} proposed.`,
+        });
+        setTimeout(() => {
+          router.push(
+            `/table-matching/${encodeURIComponent(
+              finalSetId!
+            )}?project_id=${encodeURIComponent(projectId)}`
+          );
+        }, 800);
+      } else {
+        router.push(`/table-matching?project_id=${encodeURIComponent(projectId)}`);
+      }
     } catch (e: any) {
       const msg = e?.message || "Failed to propose table pairs";
       setError(msg);
@@ -234,6 +327,72 @@ function DiscoverInner() {
             >
               <X className="w-3.5 h-3.5" />
             </button>
+          </div>
+        )}
+
+        {/* ── Live Streaming Agent Execution Console ──────── */}
+        {submitting && (
+          <div className="rounded-xl border border-indigo-200 bg-gradient-to-b from-indigo-50/80 to-white p-5 shadow-xs space-y-4 animate-in fade-in duration-300">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-indigo-600 text-white flex items-center justify-center shadow-xs">
+                  <Sparkles className="w-4 h-4 animate-pulse" />
+                </div>
+                <div>
+                  <h3 className="text-[13px] font-semibold text-slate-900 flex items-center gap-2">
+                    Table Matching Agent Active
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-indigo-100 text-indigo-700 animate-pulse">
+                      LIVE STREAM
+                    </span>
+                  </h3>
+                  <p className="text-[11.5px] text-slate-600 font-medium">
+                    {streamingStatus || "Evaluating topological schemas..."}
+                  </p>
+                </div>
+              </div>
+              <span className="text-[13px] font-mono font-semibold text-indigo-700 tabular-nums">
+                {streamingProgress}%
+              </span>
+            </div>
+
+            {/* Progress bar */}
+            <div className="w-full bg-slate-200/80 rounded-full h-1.5 overflow-hidden">
+              <div
+                className="bg-indigo-600 h-1.5 rounded-full transition-all duration-300 ease-out"
+                style={{ width: `${streamingProgress}%` }}
+              />
+            </div>
+
+            {/* Live stream of matched pairs */}
+            {streamedPairs.length > 0 && (
+              <div className="space-y-2 pt-2 border-t border-indigo-100/80">
+                <div className="flex items-center justify-between text-[11px] font-semibold text-slate-600">
+                  <span>Matched Candidates ({streamedPairs.length})</span>
+                  <span>Confidence</span>
+                </div>
+                <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
+                  {streamedPairs.map((p, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center justify-between gap-2 p-2.5 rounded-lg border border-slate-200 bg-white shadow-xs text-[11.5px]"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="font-mono font-medium text-slate-900 truncate">
+                          {p.source_table}
+                        </span>
+                        <ArrowRight className="w-3 h-3 text-slate-400 shrink-0" />
+                        <span className="font-mono font-medium text-indigo-600 truncate">
+                          {p.target_table}
+                        </span>
+                      </div>
+                      <span className="shrink-0 font-mono text-[11px] font-semibold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        {(p.confidence_score * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
